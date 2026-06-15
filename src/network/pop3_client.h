@@ -30,6 +30,9 @@ public:
     bool stls();                                             // STARTTLS for POP3
     void quit();
 
+    // Read a single-line POP3 response (public for testing)
+    std::string recv_line();
+
     // Status
     std::string get_last_response() const { return last_response_; }
     std::string get_last_error() const { return last_error_; }
@@ -43,9 +46,6 @@ public:
     }
 
 private:
-    // Read a single-line POP3 response
-    std::string recv_line();
-
     // Read a multi-line POP3 response (terminated by \r\n.\r\n)
     std::string recv_multiline();
 

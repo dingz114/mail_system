@@ -24,7 +24,8 @@ public:
 
 private slots:
     void on_provider_changed(int index);
-    void on_test_connection();
+    void on_test_smtp();
+    void on_test_pop3();
     void on_save();
 
 private:
@@ -42,7 +43,8 @@ private:
     QSpinBox*   pop3_port_spin_;
     QCheckBox*  pop3_ssl_check_;
     QCheckBox*  leave_on_server_check_;
-    QPushButton* test_btn_;
+    QPushButton* test_smtp_btn_;
+    QPushButton* test_pop3_btn_;
     QPushButton* save_btn_;
     QPushButton* cancel_btn_;
 

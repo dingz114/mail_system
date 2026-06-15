@@ -35,6 +35,7 @@ private slots:
     void on_account_changed(int index);
     void on_folder_changed();
     void on_email_selected(int email_id);
+    void on_send_draft(int draft_id, const Email& updated);
     void on_refresh();
 
 private:

@@ -534,11 +534,68 @@ void MainWindow::update_folder_counts() {
 void MainWindow::on_email_selected(int email_id) {
     if (email_id < 0) return;
     Email email = db_mgr_->get_email(email_id);
+
+    // 草稿箱中点击 → 打开编辑对话框继续编辑
+    if (current_folder_ == "drafts") {
+        ComposeDialog dlg(db_mgr_, current_account_id_, this);
+        dlg.load_draft(email);
+        if (dlg.exec() == QDialog::Accepted) {
+            // 用户点了发送
+            on_send_draft(email_id, dlg.get_email());
+        }
+        // 用户取消或关闭对话框 → 草稿保持原样
+        return;
+    }
+
     email_view_->show_email(email);
     if (!email.is_read) {
         db_mgr_->mark_read(email_id);
         update_folder_counts();
     }
+}
+
+void MainWindow::on_send_draft(int draft_id, const Email& updated) {
+    Account acc = db_mgr_->get_account(current_account_id_);
+    status_label_->setText(QStringLiteral("正在发送草稿..."));
+
+    typedef std::pair<bool, std::string> SendResult;
+    auto* watcher = new QFutureWatcher<SendResult>(this);
+    connect(watcher, &QFutureWatcher<SendResult>::finished,
+            [this, watcher, draft_id, updated, acc]() {
+        SendResult r = watcher->result();
+        if (r.first) {
+            db_mgr_->mark_deleted(draft_id);
+            Email sent = updated;
+            sent.account_id = acc.id;
+            sent.folder = "sent";
+            auto now = std::time(nullptr);
+            char buf[64];
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+            sent.received_date = buf;
+            db_mgr_->save_email(sent);
+            status_label_->setText(QStringLiteral("草稿已发送！"));
+        } else {
+            QMessageBox::critical(this, QStringLiteral("发送失败"),
+                                  QString::fromStdString(r.second));
+            status_label_->setText(QStringLiteral("草稿发送失败"));
+        }
+        load_emails(current_folder_);
+        update_folder_counts();
+        watcher->deleteLater();
+    });
+
+    QFuture<SendResult> future = QtConcurrent::run([updated, acc]() -> SendResult {
+        MimeEncoder encoder;
+        std::string mime = encoder.encode(updated);
+        SmtpClient smtp;
+        Email enc = updated;
+        enc.body_plain = mime;
+        bool ok = smtp.send_email(enc,
+            acc.smtp_server, acc.smtp_port, acc.smtp_ssl,
+            acc.username, acc.password);
+        return {ok, ok ? "" : smtp.get_last_error()};
+    });
+    watcher->setFuture(future);
 }
 
 void MainWindow::on_receive() {
@@ -549,46 +606,64 @@ void MainWindow::on_receive() {
     }
 
     Account acc = db_mgr_->get_account(current_account_id_);
+    btn_receive_->setEnabled(false);
     status_label_->setText(QStringLiteral("正在连接 POP3 服务器..."));
 
-    auto* watcher = new QFutureWatcher<std::vector<Email>>(this);
-    connect(watcher, &QFutureWatcher<std::vector<Email>>::finished, [this, watcher, acc]() {
-        auto emails = watcher->result();
-        MimeDecoder decoder;
-        int new_count = 0;
+    typedef std::pair<std::vector<Email>, std::string> ReceiveResult;
+    auto* watcher = new QFutureWatcher<ReceiveResult>(this);
+    connect(watcher, &QFutureWatcher<ReceiveResult>::finished, [this, watcher, acc]() {
+        ReceiveResult r = watcher->result();
+        auto emails = r.first;
+        std::string err = r.second;
 
-        for (auto& email : emails) {
-            if (!email.pop3_uid.empty() &&
-                db_mgr_->is_uid_downloaded(acc.id, email.pop3_uid)) {
-                continue;
-            }
+        if (!err.empty()) {
+            QMessageBox::warning(this, QStringLiteral("接收失败"),
+                                 QString::fromStdString(err));
+            status_label_->setText(QStringLiteral("接收失败 — %1").arg(QString::fromStdString(err)));
+        } else {
+            MimeDecoder decoder;
+            int new_count = 0;
 
-            email = decoder.decode(email.body_plain, acc.id);
-            email.folder = "inbox";
-            email.received_date = email.received_date.empty() ? "now" : email.received_date;
-
-            int email_id = db_mgr_->save_email(email);
-            if (email_id > 0) {
-                if (!email.pop3_uid.empty()) {
-                    db_mgr_->mark_uid_downloaded(acc.id, email.pop3_uid, email_id);
+            for (auto& email : emails) {
+                if (!email.pop3_uid.empty() &&
+                    db_mgr_->is_uid_downloaded(acc.id, email.pop3_uid)) {
+                    continue;
                 }
-                new_count++;
+
+                email = decoder.decode(email.body_plain, acc.id);
+                email.folder = "inbox";
+                email.received_date = email.received_date.empty() ? "now" : email.received_date;
+
+                int email_id = db_mgr_->save_email(email);
+                if (email_id > 0) {
+                    if (!email.pop3_uid.empty()) {
+                        db_mgr_->mark_uid_downloaded(acc.id, email.pop3_uid, email_id);
+                    }
+                    new_count++;
+                }
             }
+
+            status_label_->setText(QStringLiteral("接收完成 — 共 %1 封新邮件").arg(new_count));
+            load_emails(current_folder_);
+            update_folder_counts();
         }
 
-        status_label_->setText(QStringLiteral("接收完成 — 共 %1 封新邮件").arg(new_count));
-        load_emails(current_folder_);
-        update_folder_counts();
+        btn_receive_->setEnabled(true);
         watcher->deleteLater();
     });
 
-    QFuture<std::vector<Email>> future = QtConcurrent::run([acc]() {
+    QFuture<ReceiveResult> future = QtConcurrent::run([acc]() -> ReceiveResult {
         Pop3Client pop3;
         int new_count = 0;
         auto emails = pop3.receive_emails(
             acc.pop3_server, acc.pop3_port, acc.pop3_ssl,
             acc.username, acc.password, &new_count);
-        return emails;
+        std::string err = pop3.get_last_error();
+        if (err.empty() && emails.empty()) {
+            // Distinguish "0 new emails" from "error"
+            // Leave err empty — 0 emails is normal
+        }
+        return {emails, err};
     });
 
     watcher->setFuture(future);
@@ -608,10 +683,12 @@ void MainWindow::on_compose() {
 
         status_label_->setText(QStringLiteral("正在发送邮件..."));
 
-        auto* watcher = new QFutureWatcher<bool>(this);
-        connect(watcher, &QFutureWatcher<bool>::finished, [this, watcher, email, acc]() {
-            bool success = watcher->result();
-            if (success) {
+        // 返回 <成功, 错误信息>，空字符串 = 成功
+        typedef std::pair<bool, std::string> SendResult;
+        auto* watcher = new QFutureWatcher<SendResult>(this);
+        connect(watcher, &QFutureWatcher<SendResult>::finished, [this, watcher, email, acc]() {
+            SendResult r = watcher->result();
+            if (r.first) {
                 Email sent_email = email;
                 sent_email.account_id = acc.id;
                 sent_email.folder = "sent";
@@ -625,22 +702,30 @@ void MainWindow::on_compose() {
                 load_emails(current_folder_);
                 update_folder_counts();
             } else {
-                QMessageBox::critical(this, QStringLiteral("发送失败"),
-                                      QStringLiteral("邮件发送失败，请检查 SMTP 设置和网络连接。"));
-                status_label_->setText(QStringLiteral("发送失败"));
+                QString err = QString::fromStdString(r.second);
+                if (err.isEmpty()) err = QStringLiteral("未知错误");
+                QMessageBox::critical(this, QStringLiteral("发送失败"), err);
+                status_label_->setText(QStringLiteral("发送失败 — %1").arg(err));
             }
             watcher->deleteLater();
         });
 
-        QFuture<bool> future = QtConcurrent::run([email, acc]() {
+        QFuture<SendResult> future = QtConcurrent::run([email, acc]() -> SendResult {
             MimeEncoder encoder;
             std::string mime = encoder.encode(email);
             SmtpClient smtp;
             Email enc_email = email;
             enc_email.body_plain = mime;
-            return smtp.send_email(enc_email,
-                                   acc.smtp_server, acc.smtp_port, acc.smtp_ssl,
-                                   acc.username, acc.password);
+
+            bool ok = smtp.send_email(enc_email,
+                                      acc.smtp_server, acc.smtp_port, acc.smtp_ssl,
+                                      acc.username, acc.password);
+            std::string err;
+            if (!ok) {
+                err = smtp.get_last_error();
+                if (err.empty()) err = smtp.get_last_response();
+            }
+            return {ok, err};
         });
 
         watcher->setFuture(future);

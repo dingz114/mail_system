@@ -132,27 +132,71 @@ int SslSocket::send(const char* data, int len) {
 
 int SslSocket::recv(char* buffer, int buf_size, int timeout_sec) {
     if (!ssl_connected_ || !ssl_) {
-        // Fall back to plain TCP
         return tcp_.recv(buffer, buf_size, timeout_sec);
     }
 
-    // Use non-blocking with timeout via select() on underlying socket
     SOCKET sock = tcp_.get_handle();
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(sock, &fds);
-    struct timeval tv;
-    tv.tv_sec = timeout_sec;
-    tv.tv_usec = 0;
 
-    int sel_ret = select((int)sock + 1, &fds, nullptr, nullptr, &tv);
-    if (sel_ret <= 0) return -1;
-
-    int bytes = SSL_read(ssl_, buffer, buf_size - 1);
-    if (bytes > 0) {
-        buffer[bytes] = '\0';
+    // 1) Check if OpenSSL already has buffered decrypted data
+    int pending = SSL_pending(ssl_);
+    if (pending > 0) {
+        int bytes = SSL_read(ssl_, buffer, (int)std::min((size_t)(buf_size - 1), (size_t)pending));
+        if (bytes > 0) {
+            buffer[bytes] = '\0';
+            return bytes;
+        }
     }
-    return bytes;
+
+    // 2) Make socket non-blocking for select() + SSL_read combo
+    u_long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
+
+    // 3) Wait for data with select(), then SSL_read
+    auto start = std::chrono::steady_clock::now();
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= timeout_sec) {
+            // Restore blocking mode
+            mode = 0;
+            ioctlsocket(sock, FIONBIO, &mode);
+            return -1;
+        }
+
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(sock, &fds);
+        struct timeval tv;
+        tv.tv_sec = 1;  // poll every 1 second
+        tv.tv_usec = 0;
+
+        int sel = select((int)sock + 1, &fds, nullptr, nullptr, &tv);
+        if (sel < 0) {
+            mode = 0; ioctlsocket(sock, FIONBIO, &mode);
+            return -1;
+        }
+        if (sel == 0) continue;  // timeout, loop and recheck total elapsed
+
+        // Socket readable, try SSL_read
+        int bytes = SSL_read(ssl_, buffer, buf_size - 1);
+        if (bytes > 0) {
+            buffer[bytes] = '\0';
+            mode = 0; ioctlsocket(sock, FIONBIO, &mode);
+            return bytes;
+        }
+        if (bytes == 0) {
+            mode = 0; ioctlsocket(sock, FIONBIO, &mode);
+            return 0;  // clean shutdown
+        }
+        // bytes < 0
+        int err = SSL_get_error(ssl_, bytes);
+        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+            continue;  // retry
+        }
+        // real error
+        mode = 0; ioctlsocket(sock, FIONBIO, &mode);
+        return -1;
+    }
 }
 
 std::string SslSocket::recv_until(const std::string& terminator, int timeout_sec) {
