@@ -96,42 +96,105 @@ mail_system/
 
 ### 前置依赖
 
-1. **Qt** 5.15.2 或 Qt 6.5+（[qt.io](https://www.qt.io/download)）
-2. **MySQL Server** 8.0+（[mysql.com](https://dev.mysql.com/downloads/)）
-3. **OpenSSL** 1.1.1+（[slproweb.com](https://slproweb.com/products/Win32OpenSSL.html) 或 vcpkg）
-4. **CMake** 3.16+（[cmake.org](https://cmake.org/download/)）
-5. **Visual Studio 2019/2022**（MSVC）或 **MinGW-w64**
+编译前请确保已安装：
+
+| 依赖 | 本机确认命令 |
+|------|-------------|
+| Qt 6.5+（MinGW 版本） | `ls D:/huawei/qt/6.5.3/mingw_64/` |
+| MySQL Server 8.0 | `ls "C:/Program Files/MySQL/MySQL Server 8.0/"` |
+| OpenSSL（conda 自带） | `ls D:/ProgramData/miniconda3/Library/include/openssl/ssl.h` |
+| CMake 3.16+（Qt 自带） | `D:/huawei/qt/Tools/CMake_64/bin/cmake.exe --version` |
+| MinGW-w64（Qt 自带） | `D:/huawei/qt/Tools/mingw1310_64/bin/g++.exe --version` |
 
 ### 初始化数据库
 
-```bash
-# 启动 MySQL 服务，然后执行建表脚本
-mysql -u root -p < sql/schema.sql
+#### ① 启动 MySQL 服务
+
+以**管理员身份**打开终端，执行以下任一方式：
+
+```powershell
+# 方式 A：net 命令（以管理员身份运行）
+net start MySQL
+
+# 方式 B：sc 命令（以管理员身份运行）
+sc start MySQL
+
+# 方式 C：图形界面
+Win+R → 输入 services.msc → 找到 MySQL → 右键 → 启动
 ```
 
-### 编译
+> **必须以管理员身份运行终端**（右键 → 以管理员身份运行），否则会报"拒绝访问"。
+>
+> MySQL 服务名常见为 `MySQL`、`MySQL80`、`MYSQL`。不确定时运行 `sc query state= all | findstr MySQL` 查看。
+
+#### ② 执行建表脚本
+
+启动 MySQL 命令行并执行 `sql/schema.sql`：
+
+```sql
+-- 在 mysql> 命令行中使用 source（注意用正斜杠）
+source D:/HuaweiMoveData/Users/huawei/Desktop/mail_system/mail_system/sql/schema.sql;
+```
+
+> 首次进入 MySQL 命令行：`mysql -u root -p`，输入密码即可。如果从未设置过 root 密码，命令行可能会提示或用空密码尝试。
+
+### 编译前需修改
+
+**只需修改一个文件：`src/main.cpp` 第 18 行** — 把 `DB_PASSWORD` 改成你的 MySQL root 密码：
+
+```cpp
+static const char* DB_PASSWORD = "你的MySQL密码";   // 第 18 行，只改这里
+```
+
+其他参数（主机 `localhost`、端口 `3306`、用户名 `root`、数据库名 `mail_system`）均使用默认值，无需改动。
+
+> **`CMakeLists.txt` 通常不需要改。** 仅当你把 MySQL 或 OpenSSL 装在非默认路径时才需要修改以下两行：
+> - 第 21 行 `MYSQL_ROOT` — MySQL 安装根目录
+> - 第 33 行 `OPENSSL_ROOT` — OpenSSL 安装根目录
+>
+> 项目中 `lib_mingw/` 目录已包含预生成的 MinGW 导入库（`libmysql.dll.a` / `libssl.dll.a` / `libcrypto.dll.a`），开箱即用。
+
+### 编译（三种方式，选其一）
+
+**方式一：Qt 自带终端（最简单，推荐）**
+
+开始菜单搜索 **"Qt 6.5.3 (MinGW 13.1.0 64-bit)"**，打开后执行：
 
 ```bash
-# 使用 Qt 6 + MSVC 2019
-cmake -B build -G "Visual Studio 16 2019" -A x64 ^
-    -DCMAKE_PREFIX_PATH="C:/Qt/6.x.x/msvc2019_64"
+cd D:/HuaweiMoveData/Users/huawei/Desktop/mail_system/mail_system
+cmake -B build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="D:/huawei/qt/6.5.3/mingw_64" -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
 
-# 使用 Qt 5 + MinGW
-cmake -B build -G "MinGW Makefiles" ^
-    -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/mingw81_64"
+**方式二：PowerShell 手动指定**
+
+```powershell
+cd D:\HuaweiMoveData\Users\huawei\Desktop\mail_system\mail_system
+
+# 设置 PATH
+$env:PATH = "D:\huawei\qt\Tools\mingw1310_64\bin;D:\huawei\qt\Tools\CMake_64\bin;$env:PATH"
+
+# 配置
+cmake -B build -G "MinGW Makefiles" `
+    -DCMAKE_PREFIX_PATH="D:/huawei/qt/6.5.3/mingw_64" `
+    -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_CXX_COMPILER="D:/huawei/qt/Tools/mingw1310_64/bin/g++.exe" `
+    -DCMAKE_MAKE_PROGRAM="D:/huawei/qt/Tools/mingw1310_64/bin/mingw32-make.exe"
 
 # 编译
-cmake --build build --config Release
+cmake --build build
 ```
+
+**方式三：Qt Creator**
+
+打开 Qt Creator → **File → Open File or Project** → 选择 `CMakeLists.txt` → 选择 Kit **"Qt 6.5.3 MinGW 64-bit"** → 点击左下角锤子图标 Build。
 
 ### 运行
 
-```bash
-# 确保 MySQL 服务已启动，且 libmysql.dll 在 PATH 中或与 exe 同目录
-./build/Release/MailSystem.exe
+```powershell
+# 确保 MySQL 服务已启动
+.\build\MailSystem.exe
 ```
-
-> **注意**：首次运行前，请根据本地 MySQL 配置修改 `src/main.cpp` 中的数据库连接参数。
 
 ## 使用说明
 

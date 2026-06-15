@@ -15,7 +15,7 @@
 static const char* DB_HOST = "localhost";
 static const int   DB_PORT = 3306;
 static const char* DB_USER = "root";
-static const char* DB_PASSWORD = "root";
+static const char* DB_PASSWORD = "865486";
 static const char* DB_NAME = "mail_system";
 
 static void ensure_data_dirs() {

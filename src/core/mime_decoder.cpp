@@ -126,7 +126,7 @@ void MimeDecoder::parse_headers(const std::string& header_text, Email& email) co
     }
 }
 
-void MimeDecoder::parse_body(const std::string& body_text, const std::string& body_header_hint, Email& email) const {
+void MimeDecoder::parse_body(const std::string& body_text, Email& email, const std::string& body_header_hint) const {
     // Determine Content-Type from the headers in body_text or hint
     std::string content_type = "text/plain; charset=\"utf-8\"";
     std::map<std::string, std::string> params;

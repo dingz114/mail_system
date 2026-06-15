@@ -16,37 +16,32 @@ else()
     set(QT_LIBS Qt5::Widgets)
 endif()
 
-# --- Find OpenSSL ---
-find_package(OpenSSL REQUIRED)
+# --- MySQL ---
+# Modify these paths to match your MySQL installation
+set(MYSQL_ROOT "C:/Program Files/MySQL/MySQL Server 8.0" CACHE PATH "MySQL Server root directory")
+set(MYSQL_INCLUDE_DIR "${MYSQL_ROOT}/include")
+set(MYSQL_LIB_DIR "${MYSQL_ROOT}/lib")
+set(MYSQL_DLL "${MYSQL_LIB_DIR}/libmysql.dll" CACHE FILEPATH "MySQL client DLL")
+set(MYSQL_IMPLIB "${CMAKE_SOURCE_DIR}/lib_mingw/libmysql.dll.a" CACHE FILEPATH "MinGW import lib for MySQL")
 
-# --- Find MySQL ---
-# Try to locate MySQL Connector/C
-# Common Windows paths for MySQL Server 8.0
-set(MYSQL_PATHS
-    "C:/Program Files/MySQL/MySQL Server 8.0"
-    "C:/Program Files/MySQL/MySQL Server 8.4"
-    "C:/Program Files/MySQL/MySQL Server 9.0"
-    "C:/Program Files/MySQL/MySQL Connector C 6.1"
-)
+if(NOT EXISTS "${MYSQL_INCLUDE_DIR}/mysql.h")
+    message(FATAL_ERROR "mysql.h not found at ${MYSQL_INCLUDE_DIR}/mysql.h
+    Please edit MYSQL_ROOT in CMakeLists.txt to point to your MySQL installation.")
+endif()
 
-set(MYSQL_FOUND FALSE)
-foreach(MYSQL_PATH ${MYSQL_PATHS})
-    if(EXISTS "${MYSQL_PATH}/include/mysql.h")
-        set(MYSQL_INCLUDE_DIR "${MYSQL_PATH}/include" CACHE PATH "MySQL include directory")
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-            set(MYSQL_LIB_DIR "${MYSQL_PATH}/lib" CACHE PATH "MySQL library directory")
-        else()
-            set(MYSQL_LIB_DIR "${MYSQL_PATH}/lib" CACHE PATH "MySQL library directory")
-        endif()
-        set(MYSQL_LIBRARY "${MYSQL_LIB_DIR}/libmysql.lib" CACHE FILEPATH "MySQL library")
-        set(MYSQL_FOUND TRUE)
-        message(STATUS "Found MySQL at: ${MYSQL_PATH}")
-        break()
-    endif()
-endforeach()
+# --- OpenSSL ---
+set(OPENSSL_ROOT "D:/ProgramData/miniconda3/Library" CACHE PATH "OpenSSL root directory")
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT}/include")
+set(OPENSSL_SSL_DLL "${OPENSSL_ROOT}/bin/libssl-3-x64.dll" CACHE FILEPATH "libssl DLL")
+set(OPENSSL_CRYPTO_DLL "${OPENSSL_ROOT}/bin/libcrypto-3-x64.dll" CACHE FILEPATH "libcrypto DLL")
+set(OPENSSL_SSL_IMPLIB "${CMAKE_SOURCE_DIR}/lib_mingw/libssl.dll.a" CACHE FILEPATH "MinGW import lib for OpenSSL")
+set(OPENSSL_CRYPTO_IMPLIB "${CMAKE_SOURCE_DIR}/lib_mingw/libcrypto.dll.a" CACHE FILEPATH "MinGW import lib for libcrypto")
 
-if(NOT MYSQL_FOUND)
-    message(FATAL_ERROR "MySQL not found. Please install MySQL Server 8.0+ or set MYSQL_INCLUDE_DIR and MYSQL_LIBRARY manually.")
+if(NOT EXISTS "${OPENSSL_INCLUDE_DIR}/openssl/ssl.h")
+    message(FATAL_ERROR "OpenSSL ssl.h not found at ${OPENSSL_INCLUDE_DIR}/openssl/ssl.h
+    Please edit OPENSSL_ROOT in CMakeLists.txt. You can install OpenSSL via:
+      conda install openssl
+    or download from https://slproweb.com/products/Win32OpenSSL.html")
 endif()
 
 # --- Collect sources ---
@@ -64,6 +59,9 @@ add_executable(MailSystem
     ${SOURCES_UI}
 )
 
+# Prevent conflicts between windows.h and winsock2.h
+target_compile_definitions(MailSystem PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+
 target_include_directories(MailSystem PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${MYSQL_INCLUDE_DIR}
@@ -72,26 +70,41 @@ target_include_directories(MailSystem PRIVATE
 
 target_link_libraries(MailSystem PRIVATE
     ${QT_LIBS}
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    ${MYSQL_LIBRARY}
+    ${OPENSSL_SSL_IMPLIB}
+    ${OPENSSL_CRYPTO_IMPLIB}
+    ${MYSQL_IMPLIB}
     ws2_32
+    wsock32
 )
 
-# Copy MySQL DLL to output directory (Windows)
-if(WIN32)
-    # Find libmysql.dll near the lib directory
-    find_file(MYSQL_DLL
-        NAMES libmysql.dll
-        PATHS "${MYSQL_LIB_DIR}/../bin" "${MYSQL_LIB_DIR}" "${MYSQL_PATH}/bin"
-        NO_DEFAULT_PATH
-    )
-    if(MYSQL_DLL)
-        add_custom_command(TARGET MailSystem POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${MYSQL_DLL}"
-            $<TARGET_FILE_DIR:MailSystem>
-            COMMENT "Copying libmysql.dll to output directory"
-        )
-    endif()
-endif()
+# --- Paths for deploy ---
+set(QT_BIN_DIR "${CMAKE_PREFIX_PATH}/bin")
+set(QT_DEPLOY_QT "${QT_BIN_DIR}/windeployqt.exe")
+set(MINGW_BIN_DIR "D:/huawei/qt/Tools/mingw1310_64/bin")
+
+# --- Copy DLLs to output directory ---
+add_custom_command(TARGET MailSystem POST_BUILD
+    # Run windeployqt to copy all Qt DLLs, plugins, etc.
+    COMMAND "${QT_DEPLOY_QT}" --no-translations --no-system-d3d-compiler --no-opengl-sw
+        $<TARGET_FILE:MailSystem>
+    # Copy MinGW runtime DLLs (windeployqt doesn't copy these)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll" $<TARGET_FILE_DIR:MailSystem>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MINGW_BIN_DIR}/libstdc++-6.dll" $<TARGET_FILE_DIR:MailSystem>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MINGW_BIN_DIR}/libwinpthread-1.dll" $<TARGET_FILE_DIR:MailSystem>
+    # Copy MySQL DLL
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${MYSQL_DLL}" $<TARGET_FILE_DIR:MailSystem>
+    # Copy OpenSSL DLLs
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${OPENSSL_SSL_DLL}" $<TARGET_FILE_DIR:MailSystem>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${OPENSSL_CRYPTO_DLL}" $<TARGET_FILE_DIR:MailSystem>
+    COMMENT "Deploying runtime DLLs with windeployqt..."
+)
+
+message(STATUS "Qt prefix:    ${CMAKE_PREFIX_PATH}")
+message(STATUS "MySQL:        ${MYSQL_INCLUDE_DIR}")
+message(STATUS "OpenSSL:      ${OPENSSL_INCLUDE_DIR}")

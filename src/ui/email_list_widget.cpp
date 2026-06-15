@@ -1,6 +1,7 @@
 #include "email_list_widget.h"
 #include <QVBoxLayout>
 #include <QHeaderView>
+#include <QFont>
 
 EmailListWidget::EmailListWidget(QWidget* parent) : QWidget(parent) {
     QVBoxLayout* layout = new QVBoxLayout(this);
@@ -9,29 +10,35 @@ EmailListWidget::EmailListWidget(QWidget* parent) : QWidget(parent) {
     table_ = new QTableWidget(this);
     table_->setColumnCount(4);
     table_->setHorizontalHeaderLabels({
-        QString::fromUtf8(""),
-        QString::fromUtf8("From"),
-        QString::fromUtf8("Subject"),
-        QString::fromUtf8("Date")
+        QString(),
+        QStringLiteral("发件人"),
+        QStringLiteral("主题"),
+        QStringLiteral("日期")
     });
 
-    // Column widths
-    table_->setColumnWidth(0, 30);   // Star/unread indicator
-    table_->setColumnWidth(1, 180);  // From
-    table_->setColumnWidth(2, 400);  // Subject
-    table_->setColumnWidth(3, 150);  // Date
+    table_->setColumnWidth(0, 40);
+    table_->setColumnWidth(1, 180);
+    table_->setColumnWidth(2, 420);
+    table_->setColumnWidth(3, 160);
 
     table_->horizontalHeader()->setStretchLastSection(true);
+    table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->verticalHeader()->setVisible(false);
     table_->setShowGrid(false);
-    table_->setAlternatingRowColors(true);
+    table_->setAlternatingRowColors(false);
+    table_->setFocusPolicy(Qt::NoFocus);
+    table_->setMouseTracking(true);
+
+    // 行高
+    table_->verticalHeader()->setDefaultSectionSize(44);
 
     layout->addWidget(table_);
 
-    connect(table_, &QTableWidget::itemSelectionChanged, this, &EmailListWidget::on_selection_changed);
+    connect(table_, &QTableWidget::itemSelectionChanged,
+            this, &EmailListWidget::on_selection_changed);
 }
 
 void EmailListWidget::set_emails(const std::vector<Email>& emails) {
@@ -43,44 +50,63 @@ void EmailListWidget::set_emails(const std::vector<Email>& emails) {
         int row = table_->rowCount();
         table_->insertRow(row);
 
-        // Star/unread indicator
+        bool unread = !email.is_read;
+
+        // 0 — 状态指示图标
         QTableWidgetItem* indicator = new QTableWidgetItem();
         if (email.is_flagged) {
-            indicator->setText(QString::fromUtf8("★"));  // Star
-        } else if (!email.is_read) {
-            indicator->setText(QString::fromUtf8("●"));  // Dot
+            indicator->setText(QStringLiteral("⭐"));
+        } else if (unread) {
+            indicator->setText(QStringLiteral("🔵"));
         }
+        indicator->setTextAlignment(Qt::AlignCenter);
         table_->setItem(row, 0, indicator);
 
-        // From
-        QString from;
-        if (!email.sender_name.empty()) {
-            from = QString::fromStdString(email.sender_name);
-        } else {
-            from = QString::fromStdString(email.sender_addr);
-        }
+        // 1 — 发件人
+        QString from = email.sender_name.empty()
+            ? QString::fromStdString(email.sender_addr)
+            : QString::fromStdString(email.sender_name);
         QTableWidgetItem* from_item = new QTableWidgetItem(from);
-        if (!email.is_read) {
-            QFont bold_font = from_item->font();
-            bold_font.setBold(true);
-            from_item->setFont(bold_font);
-            indicator->setFont(bold_font);
-        }
         from_item->setData(Qt::UserRole, email.id);
+        if (unread) {
+            QFont f = from_item->font();
+            f.setBold(true);
+            f.setPointSize(f.pointSize() + 1);
+            from_item->setFont(f);
+            from_item->setForeground(QColor("#1A1A1A"));
+        } else {
+            from_item->setForeground(QColor("#666666"));
+        }
         table_->setItem(row, 1, from_item);
 
-        // Subject
-        QTableWidgetItem* subject_item = new QTableWidgetItem(QString::fromStdString(email.subject));
-        if (!email.is_read) {
-            QFont bold_font = subject_item->font();
-            bold_font.setBold(true);
-            subject_item->setFont(bold_font);
+        // 2 — 主题
+        QTableWidgetItem* subject_item = new QTableWidgetItem(
+            QString::fromStdString(email.subject.empty() ? "(无主题)" : email.subject));
+        if (unread) {
+            QFont f = subject_item->font();
+            f.setBold(true);
+            subject_item->setFont(f);
+            subject_item->setForeground(QColor("#1A1A1A"));
+        } else {
+            subject_item->setForeground(QColor("#888888"));
         }
         table_->setItem(row, 2, subject_item);
 
-        // Date
-        QTableWidgetItem* date_item = new QTableWidgetItem(QString::fromStdString(email.received_date));
+        // 3 — 日期
+        QTableWidgetItem* date_item = new QTableWidgetItem(
+            QString::fromStdString(email.received_date));
+        date_item->setForeground(QColor("#AAAAAA"));
+        date_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         table_->setItem(row, 3, date_item);
+
+        // 交替行背景色
+        if (row % 2 == 1) {
+            QColor alt("#FAFBFC");
+            for (int c = 0; c < 4; ++c) {
+                if (table_->item(row, c))
+                    table_->item(row, c)->setBackground(alt);
+            }
+        }
     }
 }
 

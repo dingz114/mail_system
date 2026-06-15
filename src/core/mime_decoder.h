@@ -16,7 +16,7 @@ private:
     void parse_headers(const std::string& header_text, Email& email) const;
 
     // Parse the body according to Content-Type
-    void parse_body(const std::string& body_text, const std::string& content_type, Email& email) const;
+    void parse_body(const std::string& body_text, Email& email, const std::string& content_type = "") const;
 
     // Parse a multipart body
     void parse_multipart(const std::string& body, const std::string& boundary, Email& email) const;
