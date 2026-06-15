@@ -10,6 +10,123 @@
     #include <windows.h>
 #endif
 
+namespace {
+
+std::string trim_copy(const std::string& value) {
+    size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+std::string lower_copy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool split_header_body(const std::string& text,
+                       std::string& headers,
+                       std::string& body) {
+    size_t pos = text.find("\r\n\r\n");
+    size_t sep_len = 4;
+    if (pos == std::string::npos) {
+        pos = text.find("\n\n");
+        sep_len = 2;
+    }
+    if (pos == std::string::npos) {
+        return false;
+    }
+
+    headers = text.substr(0, pos);
+    body = text.substr(pos + sep_len);
+    return true;
+}
+
+std::map<std::string, std::string> parse_unfolded_headers(const std::string& header_text) {
+    std::map<std::string, std::string> headers;
+    std::istringstream iss(header_text);
+    std::string line;
+    std::string current_name;
+    std::string current_value;
+
+    auto flush = [&]() {
+        if (!current_name.empty()) {
+            headers[lower_copy(current_name)] = trim_copy(current_value);
+            current_name.clear();
+            current_value.clear();
+        }
+    };
+
+    while (std::getline(iss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) {
+            flush();
+            continue;
+        }
+
+        if ((line[0] == ' ' || line[0] == '\t') && !current_name.empty()) {
+            current_value += " " + trim_copy(line);
+            continue;
+        }
+
+        flush();
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) {
+            continue;
+        }
+        current_name = line.substr(0, colon);
+        current_value = line.substr(colon + 1);
+    }
+    flush();
+
+    return headers;
+}
+
+std::string clean_pop3_payload(const std::string& raw) {
+    std::string text = raw;
+
+    if (text.rfind("+OK", 0) == 0) {
+        size_t first_crlf = text.find("\r\n");
+        size_t first_lf = text.find('\n');
+        if (first_crlf != std::string::npos) {
+            text.erase(0, first_crlf + 2);
+        } else if (first_lf != std::string::npos) {
+            text.erase(0, first_lf + 1);
+        }
+    }
+
+    auto remove_suffix = [&](const std::string& suffix) {
+        if (text.size() >= suffix.size() &&
+            text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            text.erase(text.size() - suffix.size());
+            return true;
+        }
+        return false;
+    };
+
+    remove_suffix("\r\n.\r\n") || remove_suffix("\n.\n") ||
+        remove_suffix("\r\n.") || remove_suffix("\n.");
+
+    std::istringstream iss(text);
+    std::ostringstream oss;
+    std::string line;
+    bool first = true;
+    while (std::getline(iss, line)) {
+        if (!first) oss << '\n';
+        first = false;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("..", 0) == 0) {
+            line.erase(0, 1);
+        }
+        oss << line;
+    }
+
+    return oss.str();
+}
+
+} // namespace
+
 Email MimeDecoder::decode(const std::string& raw_email, int account_id) const {
     Email email;
     email.account_id = account_id;
@@ -17,23 +134,29 @@ Email MimeDecoder::decode(const std::string& raw_email, int account_id) const {
 
     if (raw_email.empty()) return email;
 
-    // Split headers and body at first blank line (\r\n\r\n)
-    size_t header_end = raw_email.find("\r\n\r\n");
-    if (header_end == std::string::npos) {
-        // Try just \n\n
-        header_end = raw_email.find("\n\n");
-        if (header_end == std::string::npos) {
-            email.body_plain = raw_email;
-            return email;
-        }
-        header_end += 1;  // Account for single \n
+    const std::string message = clean_pop3_payload(raw_email);
+    std::string header_text;
+    std::string body_text;
+    if (!split_header_body(message, header_text, body_text)) {
+        email.body_plain = message;
+        return email;
     }
 
-    std::string header_text = raw_email.substr(0, header_end);
-    std::string body_text = raw_email.substr(header_end + 4);  // Skip \r\n\r\n
-
     parse_headers(header_text, email);
-    parse_body(body_text, email);
+
+    std::map<std::string, std::string> top_headers = parse_unfolded_headers(header_text);
+    std::string media_type;
+    std::map<std::string, std::string> params;
+    parse_content_type(top_headers.count("content-type")
+                           ? top_headers["content-type"]
+                           : "text/plain; charset=\"utf-8\"",
+                       media_type, params);
+
+    if (media_type.find("multipart/") == 0 && params.count("boundary")) {
+        parse_multipart(body_text, params["boundary"], email);
+    } else {
+        parse_body(body_text, email, header_text);
+    }
 
     return email;
 }
@@ -128,67 +251,41 @@ void MimeDecoder::parse_headers(const std::string& header_text, Email& email) co
 }
 
 void MimeDecoder::parse_body(const std::string& body_text, Email& email, const std::string& body_header_hint) const {
-    // Determine Content-Type from the headers in body_text or hint
-    std::string content_type = "text/plain; charset=\"utf-8\"";
     std::map<std::string, std::string> params;
-    std::string media_type;
+    std::string media_type = "text/plain";
 
     // Check if body_text starts with headers (for multipart sub-parts)
-    size_t header_end = body_text.find("\r\n\r\n");
     std::string part_headers;
     std::string part_body = body_text;
 
-    if (header_end != std::string::npos) {
-        part_headers = body_text.substr(0, header_end);
-        part_body = body_text.substr(header_end + 4);
+    if (!body_header_hint.empty()) {
+        part_headers = body_header_hint;
+    } else {
+        split_header_body(body_text, part_headers, part_body);
     }
 
-    // For the top-level call, the content type comes from the email's MIME headers
-    // We handle it via parse_multipart called from decode
-
-    // Default: treat as plain text
-    email.body_plain = part_body;
-
-    // Try to handle Content-Transfer-Encoding (default 7bit)
-    // Look for Content-Transfer-Encoding in part headers
+    std::string transfer_encoding = "7bit";
+    std::string charset = "utf-8";
     if (!part_headers.empty()) {
-        std::istringstream iss(part_headers);
-        std::string line;
-        std::string transfer_encoding = "7bit";
-        std::string charset = "utf-8";
-
-        while (std::getline(iss, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-
-            size_t colon = line.find(':');
-            if (colon != std::string::npos) {
-                std::string name = line.substr(0, colon);
-                std::string value = line.substr(colon + 1);
-                // Trim value
-                size_t start = value.find_first_not_of(" \t");
-                if (start != std::string::npos) value = value.substr(start);
-
-                std::string lower_name = name;
-                std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-
-                if (lower_name == "content-transfer-encoding") {
-                    std::string lower_val = value;
-                    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), ::tolower);
-                    transfer_encoding = lower_val;
-                } else if (lower_name == "content-type") {
-                    parse_content_type(value, media_type, params);
-                    if (params.count("charset")) {
-                        charset = params["charset"];
-                    }
-                }
-            }
+        auto headers = parse_unfolded_headers(part_headers);
+        if (headers.count("content-transfer-encoding")) {
+            transfer_encoding = lower_copy(headers["content-transfer-encoding"]);
         }
+        if (headers.count("content-type")) {
+            parse_content_type(headers["content-type"], media_type, params);
+        }
+        if (params.count("charset")) {
+            charset = params["charset"];
+        }
+    }
 
-        // Decode transfer encoding
-        email.body_plain = decode_transfer_encoding(part_body, transfer_encoding);
+    std::string decoded = decode_transfer_encoding(part_body, transfer_encoding);
+    decoded = convert_to_utf8(decoded, charset);
 
-        // Convert charset
-        email.body_plain = convert_to_utf8(email.body_plain, charset);
+    if (media_type == "text/html") {
+        email.body_html = decoded;
+    } else {
+        email.body_plain = decoded;
     }
 }
 
@@ -208,33 +305,37 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
             }
         }
 
-        // Move past the delimiter line (there may be trailing chars or \r\n)
+        // Move past the delimiter line. Real mail normally uses CRLF, while
+        // some POP3 paths and tests may already be normalized to LF.
         size_t part_start = body.find("\r\n", next);
+        size_t line_break_len = 2;
+        if (part_start == std::string::npos) {
+            part_start = body.find('\n', next);
+            line_break_len = 1;
+        }
         if (part_start == std::string::npos) break;
-        part_start += 2;  // Skip \r\n
+        part_start += line_break_len;
 
         // Find the next boundary to determine part end
         size_t part_end = body.find(delimiter, part_start);
         if (part_end == std::string::npos) {
             part_end = body.size();
         } else {
-            // Go back before the \r\n before the delimiter
-            if (part_end >= 2) part_end -= 2;
+            // Go back before the line break before the delimiter.
+            if (part_end >= 2 && body.substr(part_end - 2, 2) == "\r\n") {
+                part_end -= 2;
+            } else if (part_end >= 1 && body[part_end - 1] == '\n') {
+                part_end -= 1;
+            }
         }
 
         std::string part = body.substr(part_start, part_end - part_start);
         pos = part_end;
 
         // Parse this part's headers
-        size_t part_header_end = part.find("\r\n\r\n");
-        if (part_header_end == std::string::npos) {
-            // Try \n\n
-            part_header_end = part.find("\n\n");
-            if (part_header_end == std::string::npos) continue;
-        }
-
-        std::string part_headers = part.substr(0, part_header_end);
-        std::string part_body = part.substr(part_header_end + 4);
+        std::string part_headers;
+        std::string part_body;
+        if (!split_header_body(part, part_headers, part_body)) continue;
 
         // Parse headers for this part
         std::string media_type = "text/plain";
@@ -244,44 +345,28 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
         std::string attachment_filename;
         std::string content_id;
 
-        std::istringstream iss(part_headers);
-        std::string line;
-        while (std::getline(iss, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty()) continue;
-
-            size_t colon = line.find(':');
-            if (colon == std::string::npos) continue;
-
-            std::string name = line.substr(0, colon);
-            std::string value = line.substr(colon + 1);
-            size_t vstart = value.find_first_not_of(" \t");
-            if (vstart != std::string::npos) value = value.substr(vstart);
-
-            std::string lower = name;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-
-            if (lower == "content-type") {
-                parse_content_type(value, media_type, params);
-            } else if (lower == "content-transfer-encoding") {
-                transfer_encoding = value;
-                std::transform(transfer_encoding.begin(), transfer_encoding.end(),
-                             transfer_encoding.begin(), ::tolower);
-            } else if (lower == "content-disposition") {
-                content_disposition = value;
+        auto headers = parse_unfolded_headers(part_headers);
+        if (headers.count("content-type")) {
+            parse_content_type(headers["content-type"], media_type, params);
+        }
+        if (headers.count("content-transfer-encoding")) {
+            transfer_encoding = lower_copy(headers["content-transfer-encoding"]);
+        }
+        if (headers.count("content-disposition")) {
+            content_disposition = headers["content-disposition"];
                 // Extract filename
-                size_t fname = value.find("filename=");
+                size_t fname = content_disposition.find("filename=");
                 if (fname != std::string::npos) {
                     size_t fstart = fname + 9;
-                    if (fstart < value.size()) {
-                        char quote = value[fstart];
+                    if (fstart < content_disposition.size()) {
+                        char quote = content_disposition[fstart];
                         if (quote == '"') {
-                            size_t fend = value.find('"', fstart + 1);
+                            size_t fend = content_disposition.find('"', fstart + 1);
                             if (fend != std::string::npos) {
-                                attachment_filename = value.substr(fstart + 1, fend - fstart - 1);
+                                attachment_filename = content_disposition.substr(fstart + 1, fend - fstart - 1);
                             }
                         } else {
-                            attachment_filename = value.substr(fstart);
+                            attachment_filename = content_disposition.substr(fstart);
                             size_t semi = attachment_filename.find(';');
                             if (semi != std::string::npos) attachment_filename = attachment_filename.substr(0, semi);
                         }
@@ -292,9 +377,9 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
                 if (attachment_filename.empty() && params.count("name")) {
                     attachment_filename = decode_rfc2047(params["name"]);
                 }
-            } else if (lower == "content-id") {
-                content_id = value;
-            }
+        }
+        if (headers.count("content-id")) {
+            content_id = headers["content-id"];
         }
 
         // Decode body
@@ -325,7 +410,7 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
             email.body_html = decoded_body;
         } else if (media_type.find("multipart/") == 0 && params.count("boundary")) {
             // Nested multipart
-            parse_multipart(part, params["boundary"], email);
+            parse_multipart(part_body, params["boundary"], email);
         } else if (media_type.find("image/") == 0 || media_type.find("application/") == 0 ||
                    media_type.find("audio/") == 0 || media_type.find("video/") == 0) {
             // Inline media or unrecognized — treat as attachment
