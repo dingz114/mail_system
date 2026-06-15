@@ -2,6 +2,17 @@
 #include "../core/base64.h"
 #include <sstream>
 #include <iostream>
+#include <cctype>
+
+namespace {
+bool is_smtp_final_line(const std::string& line) {
+    return line.size() >= 4 &&
+           std::isdigit(static_cast<unsigned char>(line[0])) &&
+           std::isdigit(static_cast<unsigned char>(line[1])) &&
+           std::isdigit(static_cast<unsigned char>(line[2])) &&
+           line[3] == ' ';
+}
+}
 
 SmtpClient::SmtpClient() : last_code_(0), connected_(false) {}
 
@@ -19,7 +30,9 @@ bool SmtpClient::send_email(const Email& email,
     // Read server greeting
     recv_response();
     if (last_code_ != 220) {
-        last_error_ = "Unexpected greeting: " + last_response_;
+        last_error_ = last_response_.empty()
+            ? "No SMTP greeting received; try SSL/TLS port 465 or check proxy/firewall"
+            : "Unexpected greeting: " + last_response_;
         return false;
     }
 
@@ -28,9 +41,9 @@ bool SmtpClient::send_email(const Email& email,
         return false;
     }
 
-    // For port 587, try STARTTLS if not already SSL
+    // Port 587 is explicit TLS. Do not continue with clear-text auth if the
+    // server does not offer STARTTLS.
     if (!use_ssl && port == 587) {
-        // Check if STARTTLS is in the EHLO response
         if (last_response_.find("STARTTLS") != std::string::npos) {
             if (!starttls()) {
                 last_error_ = "STARTTLS failed: " + last_response_;
@@ -40,6 +53,9 @@ bool SmtpClient::send_email(const Email& email,
                 last_error_ = "EHLO after STARTTLS failed: " + last_response_;
                 return false;
             }
+        } else {
+            last_error_ = "Server does not advertise STARTTLS";
+            return false;
         }
     }
 
@@ -83,6 +99,49 @@ bool SmtpClient::send_email(const Email& email,
 
     if (!data_send(email.body_plain)) {
         last_error_ = "DATA send failed: " + last_response_;
+        return false;
+    }
+
+    quit();
+    return true;
+}
+
+bool SmtpClient::test_login(const std::string& smtp_server, int port, bool use_ssl,
+                            const std::string& username, const std::string& password) {
+    if (!connect(smtp_server, port, use_ssl)) {
+        return false;
+    }
+
+    recv_response();
+    if (last_code_ != 220) {
+        last_error_ = last_response_.empty()
+            ? "No SMTP greeting received; try SSL/TLS port 465 or check proxy/firewall"
+            : "Unexpected greeting: " + last_response_;
+        return false;
+    }
+
+    if (!ehlo()) {
+        last_error_ = "EHLO failed: " + last_response_;
+        return false;
+    }
+
+    if (!use_ssl && port == 587) {
+        if (last_response_.find("STARTTLS") == std::string::npos) {
+            last_error_ = "Server does not advertise STARTTLS";
+            return false;
+        }
+        if (!starttls()) {
+            last_error_ = "STARTTLS failed: " + last_response_;
+            return false;
+        }
+        if (!ehlo()) {
+            last_error_ = "EHLO after STARTTLS failed: " + last_response_;
+            return false;
+        }
+    }
+
+    if (!auth_login(username, password)) {
+        last_error_ = "AUTH LOGIN failed: " + last_response_;
         return false;
     }
 
@@ -253,29 +312,27 @@ std::string SmtpClient::recv_response() {
         std::string chunk(buffer, bytes);
         result += chunk;
 
-        // Check if this is the last line (4th char is space, not hyphen)
-        // SMTP response format: "250-message\r\n250 message\r\n"
-        if (result.size() >= 5) {
-            // Look for the pattern: \r\n<3digits><space> or start<3digits><space>
-            size_t spos = 0;
-            size_t end_pos = result.size();
-            // The last complete line determines completion
-            size_t last_crlf = result.rfind("\r\n");
-            if (last_crlf != std::string::npos && last_crlf + 2 < result.size()) {
-                spos = last_crlf + 2;
+        size_t line_start = 0;
+        while (line_start < result.size()) {
+            size_t line_end = result.find("\r\n", line_start);
+            size_t line_break_len = 2;
+            if (line_end == std::string::npos) {
+                line_end = result.find('\n', line_start);
+                line_break_len = 1;
             }
-            if (spos < result.size() && result.size() >= spos + 4) {
-                if (result[spos + 3] == ' ') {
-                    // Found a line with space after code — this terminates the response
-                    break;
-                }
-            }
-            // Also handle single-line responses
-            if (result.size() >= 4 && result[3] == ' ') {
+            if (line_end == std::string::npos) {
                 break;
             }
+            std::string line = result.substr(line_start, line_end - line_start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (is_smtp_final_line(line)) {
+                goto response_complete;
+            }
+            line_start = line_end + line_break_len;
         }
     }
+
+response_complete:
 
     // Parse status code
     if (result.size() >= 3) {

@@ -64,6 +64,7 @@ public:
 
 private:
     TcpSocket tcp_;
+    std::string host_;
     SSL_CTX*  ctx_;
     SSL*      ssl_;
     bool      ssl_connected_;

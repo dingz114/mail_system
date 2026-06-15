@@ -29,6 +29,8 @@ SslSocket::~SslSocket() {
 }
 
 bool SslSocket::connect(const std::string& host, int port) {
+    host_ = host;
+
     // Step 1: TCP connect
     if (!tcp_.connect(host, port)) {
         return false;
@@ -59,6 +61,9 @@ bool SslSocket::connect(const std::string& host, int port) {
     }
 
     SSL_set_fd(ssl_, (int)tcp_.get_handle());
+    if (!host_.empty()) {
+        SSL_set_tlsext_host_name(ssl_, host_.c_str());
+    }
 
     // Step 4: SSL handshake
     if (SSL_connect(ssl_) != 1) {
@@ -74,6 +79,7 @@ bool SslSocket::connect(const std::string& host, int port) {
 }
 
 bool SslSocket::connect_plain(const std::string& host, int port) {
+    host_ = host;
     return tcp_.connect(host, port);
 }
 
@@ -99,6 +105,9 @@ bool SslSocket::ssl_handshake() {
     }
 
     SSL_set_fd(ssl_, (int)tcp_.get_handle());
+    if (!host_.empty()) {
+        SSL_set_tlsext_host_name(ssl_, host_.c_str());
+    }
 
     if (SSL_connect(ssl_) != 1) {
         SSL_free(ssl_);

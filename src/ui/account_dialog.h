@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QPushButton>
+#include <QLabel>
 #include "../core/email.h"
 #include "../database/db_manager.h"
 
@@ -24,17 +25,24 @@ public:
 
 private slots:
     void on_provider_changed(int index);
+    void on_email_changed(const QString& text);
     void on_test_smtp();
     void on_test_pop3();
     void on_save();
 
 private:
+    void apply_provider_settings(int index);
+    void apply_domain_defaults(const QString& email);
+    void update_provider_help(int index);
+    int detect_provider_index(const QString& email) const;
+
     DbManager* db_mgr_;
 
     QLineEdit*  name_edit_;
     QLineEdit*  email_edit_;
     QLineEdit*  username_edit_;
     QLineEdit*  password_edit_;
+    QLabel*     auth_hint_;
     QComboBox*  provider_combo_;
     QLineEdit*  smtp_server_edit_;
     QSpinBox*   smtp_port_spin_;
@@ -49,6 +57,7 @@ private:
     QPushButton* cancel_btn_;
 
     int edit_id_;  // -1 for new account
+    QString last_email_text_;
 };
 
 #endif // ACCOUNT_DIALOG_H

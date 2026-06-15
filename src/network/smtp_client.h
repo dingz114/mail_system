@@ -17,6 +17,10 @@ public:
                     const std::string& smtp_server, int port, bool use_ssl,
                     const std::string& username, const std::string& password);
 
+    // Connect, negotiate TLS when needed, and verify username/password.
+    bool test_login(const std::string& smtp_server, int port, bool use_ssl,
+                    const std::string& username, const std::string& password);
+
     // Low-level commands (for granular control)
     bool connect(const std::string& server, int port, bool use_ssl);
     bool ehlo();

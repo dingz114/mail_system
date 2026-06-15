@@ -8,6 +8,105 @@
 #include <QFrame>
 #include <QFont>
 #include <QDesktopServices>
+#include <QHash>
+#include <QRegularExpression>
+#include <QUrl>
+#include <functional>
+
+namespace {
+QString replace_regex(QString input,
+                      const QRegularExpression& re,
+                      const std::function<QString(const QRegularExpressionMatch&)>& replacer) {
+    QString result;
+    int offset = 0;
+    QRegularExpressionMatchIterator it = re.globalMatch(input);
+    while (it.hasNext()) {
+        QRegularExpressionMatch match = it.next();
+        result += input.mid(offset, match.capturedStart() - offset);
+        result += replacer(match);
+        offset = match.capturedEnd();
+    }
+    result += input.mid(offset);
+    return result;
+}
+
+QString normalize_cid(QString cid) {
+    cid = QUrl::fromPercentEncoding(cid.trimmed().toUtf8()).trimmed();
+    if (cid.startsWith('<') && cid.endsWith('>') && cid.size() > 2) {
+        cid = cid.mid(1, cid.size() - 2).trimmed();
+    }
+    if (cid.startsWith(QStringLiteral("cid:"), Qt::CaseInsensitive)) {
+        cid = cid.mid(4).trimmed();
+    }
+    return cid;
+}
+
+QString add_image_constraints(QString html) {
+    if (!html.contains(QStringLiteral("<style"), Qt::CaseInsensitive)) {
+        html.prepend(QStringLiteral(
+            "<style>"
+            "body{margin:0;color:#1F2937;font-size:15px;line-height:1.8;}"
+            "img{max-width:100%;height:auto;}"
+            "table{max-width:100%;}"
+            "pre{white-space:pre-wrap;}"
+            "</style>"));
+    }
+
+    QRegularExpression img_re(QStringLiteral("<img\\b([^>]*)>"),
+                              QRegularExpression::CaseInsensitiveOption);
+    return replace_regex(html, img_re, [](const QRegularExpressionMatch& match) {
+        QString attrs = match.captured(1);
+        if (attrs.contains(QStringLiteral("style="), Qt::CaseInsensitive)) {
+            QRegularExpression style_re(
+                QStringLiteral("style\\s*=\\s*(['\"])(.*?)\\1"),
+                QRegularExpression::CaseInsensitiveOption |
+                    QRegularExpression::DotMatchesEverythingOption);
+            attrs = replace_regex(attrs, style_re, [](const QRegularExpressionMatch& style_match) {
+                QString style = style_match.captured(2).trimmed();
+                if (!style.endsWith(';') && !style.isEmpty()) style += ';';
+                style += QStringLiteral(" max-width:100%; height:auto;");
+                return QStringLiteral("style=%1%2%1").arg(style_match.captured(1), style);
+            });
+        } else {
+            attrs += QStringLiteral(" style=\"max-width:100%; height:auto;\"");
+        }
+        return QStringLiteral("<img%1>").arg(attrs);
+    });
+}
+
+QString prepare_html_body(const Email& email) {
+    QString html = QString::fromStdString(email.body_html);
+    QHash<QString, QString> cid_to_file;
+
+    for (const auto& att : email.attachments) {
+        if (att.file_path.empty() || att.content_id.empty()) continue;
+
+        QString cid = normalize_cid(QString::fromStdString(att.content_id));
+        if (cid.isEmpty()) continue;
+
+        QString path = QString::fromStdString(att.file_path);
+        if (!QFile::exists(path)) continue;
+
+        QString file_url = QUrl::fromLocalFile(path).toString();
+        cid_to_file.insert(cid.toLower(), file_url);
+    }
+
+    QRegularExpression src_re(
+        QStringLiteral("(src\\s*=\\s*)(['\"])(cid:([^'\"]+))\\2"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    html = replace_regex(html, src_re, [&cid_to_file](const QRegularExpressionMatch& match) {
+        QString cid = normalize_cid(match.captured(4)).toLower();
+        auto it = cid_to_file.constFind(cid);
+        if (it == cid_to_file.constEnd()) {
+            return match.captured(0);
+        }
+        return match.captured(1) + match.captured(2) + it.value() + match.captured(2);
+    });
+
+    return add_image_constraints(html);
+}
+}
 
 EmailViewWidget::EmailViewWidget(QWidget* parent) : QWidget(parent) {
     QVBoxLayout* layout = new QVBoxLayout(this);
@@ -90,9 +189,9 @@ void EmailViewWidget::show_email(const Email& email) {
     header_label_->setText(html);
 
     // 正文
-    if (!email.body_html.empty())
-        body_browser_->setHtml(QString::fromStdString(email.body_html));
-    else {
+    if (!email.body_html.empty()) {
+        body_browser_->setHtml(prepare_html_body(email));
+    } else {
         QString plain = QString::fromStdString(email.body_plain).toHtmlEscaped();
         plain.replace("\n", "<br>");
         body_browser_->setHtml("<div style='font-size:15px; line-height:1.9; color:#1F2937; max-width: 920px;'>" + plain + "</div>");
