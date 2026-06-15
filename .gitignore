@@ -1,0 +1,36 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Qt
+*.pro.user*
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Database
+*.db
+*.sqlite
+
+# Attachments (runtime data)
+attachments/
+
+# OpenSSL artifacts
+*.pem
+*.key
+
+# Compiled
+*.exe
+*.dll
+*.lib
+*.obj
+*.exp
+Debug/
+Release/
