@@ -7,30 +7,55 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+option(MAILSYSTEM_DEPLOY "Copy runtime DLLs after building" ON)
+
 # --- Find Qt ---
-find_package(Qt5 COMPONENTS Widgets QUIET)
-if(NOT Qt5_FOUND)
-    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 COMPONENTS Widgets QUIET)
+if(Qt6_FOUND)
     set(QT_LIBS Qt6::Widgets)
 else()
+    find_package(Qt5 REQUIRED COMPONENTS Widgets)
     set(QT_LIBS Qt5::Widgets)
 endif()
 
 # --- MySQL ---
-# Modify these paths to match your MySQL installation
+# Modify MYSQL_ROOT or MYSQL_INCLUDE_DIR to match your MySQL installation.
 set(MYSQL_ROOT "C:/Program Files/MySQL/MySQL Server 8.0" CACHE PATH "MySQL Server root directory")
-set(MYSQL_INCLUDE_DIR "${MYSQL_ROOT}/include")
-set(MYSQL_LIB_DIR "${MYSQL_ROOT}/lib")
-set(MYSQL_DLL "${MYSQL_LIB_DIR}/libmysql.dll" CACHE FILEPATH "MySQL client DLL")
+if(EXISTS "${MYSQL_ROOT}/include/mysql.h")
+    set(_MYSQL_INCLUDE_DEFAULT "${MYSQL_ROOT}/include")
+elseif(EXISTS "${MYSQL_ROOT}/Library/include/mysql.h")
+    set(_MYSQL_INCLUDE_DEFAULT "${MYSQL_ROOT}/Library/include")
+else()
+    set(_MYSQL_INCLUDE_DEFAULT "${MYSQL_ROOT}/include")
+endif()
+
+if(EXISTS "${MYSQL_ROOT}/lib/libmysql.dll")
+    set(_MYSQL_DLL_DEFAULT "${MYSQL_ROOT}/lib/libmysql.dll")
+elseif(EXISTS "${MYSQL_ROOT}/Library/bin/libmysql.dll")
+    set(_MYSQL_DLL_DEFAULT "${MYSQL_ROOT}/Library/bin/libmysql.dll")
+else()
+    set(_MYSQL_DLL_DEFAULT "${MYSQL_ROOT}/lib/libmysql.dll")
+endif()
+
+set(MYSQL_INCLUDE_DIR "${_MYSQL_INCLUDE_DEFAULT}" CACHE PATH "MySQL include directory")
+set(MYSQL_DLL "${_MYSQL_DLL_DEFAULT}" CACHE FILEPATH "MySQL client DLL")
 set(MYSQL_IMPLIB "${CMAKE_SOURCE_DIR}/lib_mingw/libmysql.dll.a" CACHE FILEPATH "MinGW import lib for MySQL")
 
 if(NOT EXISTS "${MYSQL_INCLUDE_DIR}/mysql.h")
     message(FATAL_ERROR "mysql.h not found at ${MYSQL_INCLUDE_DIR}/mysql.h
-    Please edit MYSQL_ROOT in CMakeLists.txt to point to your MySQL installation.")
+    Please configure with -DMYSQL_ROOT=... or -DMYSQL_INCLUDE_DIR=...")
 endif()
 
 # --- OpenSSL ---
-set(OPENSSL_ROOT "D:/ProgramData/miniconda3/Library" CACHE PATH "OpenSSL root directory")
+if(DEFINED ENV{CONDA_PREFIX} AND EXISTS "$ENV{CONDA_PREFIX}/Library/include/openssl/ssl.h")
+    set(_OPENSSL_ROOT_DEFAULT "$ENV{CONDA_PREFIX}/Library")
+elseif(EXISTS "D:/anaconda/Library/include/openssl/ssl.h")
+    set(_OPENSSL_ROOT_DEFAULT "D:/anaconda/Library")
+else()
+    set(_OPENSSL_ROOT_DEFAULT "D:/ProgramData/miniconda3/Library")
+endif()
+
+set(OPENSSL_ROOT "${_OPENSSL_ROOT_DEFAULT}" CACHE PATH "OpenSSL root directory")
 set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT}/include")
 set(OPENSSL_SSL_DLL "${OPENSSL_ROOT}/bin/libssl-3-x64.dll" CACHE FILEPATH "libssl DLL")
 set(OPENSSL_CRYPTO_DLL "${OPENSSL_ROOT}/bin/libcrypto-3-x64.dll" CACHE FILEPATH "libcrypto DLL")
@@ -78,32 +103,56 @@ target_link_libraries(MailSystem PRIVATE
 )
 
 # --- Paths for deploy ---
-set(QT_BIN_DIR "${CMAKE_PREFIX_PATH}/bin")
-set(QT_DEPLOY_QT "${QT_BIN_DIR}/windeployqt.exe")
-set(MINGW_BIN_DIR "D:/huawei/qt/Tools/mingw1310_64/bin")
+get_filename_component(_COMPILER_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+set(MINGW_BIN_DIR "${_COMPILER_BIN_DIR}" CACHE PATH "MinGW runtime DLL directory")
+
+if(CMAKE_PREFIX_PATH)
+    list(GET CMAKE_PREFIX_PATH 0 _QT_PREFIX_FIRST)
+    set(_QT_BIN_DEFAULT "${_QT_PREFIX_FIRST}/bin")
+else()
+    set(_QT_BIN_DEFAULT "")
+endif()
+set(QT_BIN_DIR "${_QT_BIN_DEFAULT}" CACHE PATH "Qt bin directory")
+find_program(QT_DEPLOY_QT windeployqt HINTS "${QT_BIN_DIR}" NO_DEFAULT_PATH)
+if(NOT QT_DEPLOY_QT)
+    find_program(QT_DEPLOY_QT windeployqt)
+endif()
 
 # --- Copy DLLs to output directory ---
-add_custom_command(TARGET MailSystem POST_BUILD
-    # Run windeployqt to copy all Qt DLLs, plugins, etc.
-    COMMAND "${QT_DEPLOY_QT}" --no-translations --no-system-d3d-compiler --no-opengl-sw
-        $<TARGET_FILE:MailSystem>
-    # Copy MinGW runtime DLLs (windeployqt doesn't copy these)
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll" $<TARGET_FILE_DIR:MailSystem>
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MINGW_BIN_DIR}/libstdc++-6.dll" $<TARGET_FILE_DIR:MailSystem>
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MINGW_BIN_DIR}/libwinpthread-1.dll" $<TARGET_FILE_DIR:MailSystem>
-    # Copy MySQL DLL
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MYSQL_DLL}" $<TARGET_FILE_DIR:MailSystem>
-    # Copy OpenSSL DLLs
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${OPENSSL_SSL_DLL}" $<TARGET_FILE_DIR:MailSystem>
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${OPENSSL_CRYPTO_DLL}" $<TARGET_FILE_DIR:MailSystem>
-    COMMENT "Deploying runtime DLLs with windeployqt..."
-)
+if(MAILSYSTEM_DEPLOY)
+    if(NOT QT_DEPLOY_QT)
+        message(FATAL_ERROR "windeployqt not found. Configure QT_BIN_DIR or disable MAILSYSTEM_DEPLOY.")
+    endif()
+    foreach(_runtime_dll
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+            "${MINGW_BIN_DIR}/libstdc++-6.dll"
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+            "${MYSQL_DLL}"
+            "${OPENSSL_SSL_DLL}"
+            "${OPENSSL_CRYPTO_DLL}")
+        if(NOT EXISTS "${_runtime_dll}")
+            message(FATAL_ERROR "Runtime DLL not found: ${_runtime_dll}")
+        endif()
+    endforeach()
+
+    add_custom_command(TARGET MailSystem POST_BUILD
+        COMMAND "${QT_DEPLOY_QT}" --no-translations --no-system-d3d-compiler --no-opengl-sw
+            $<TARGET_FILE:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll" $<TARGET_FILE_DIR:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MINGW_BIN_DIR}/libstdc++-6.dll" $<TARGET_FILE_DIR:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll" $<TARGET_FILE_DIR:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MYSQL_DLL}" $<TARGET_FILE_DIR:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OPENSSL_SSL_DLL}" $<TARGET_FILE_DIR:MailSystem>
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OPENSSL_CRYPTO_DLL}" $<TARGET_FILE_DIR:MailSystem>
+        COMMENT "Deploying runtime DLLs with windeployqt..."
+    )
+endif()
 
 message(STATUS "Qt prefix:    ${CMAKE_PREFIX_PATH}")
 message(STATUS "MySQL:        ${MYSQL_INCLUDE_DIR}")

@@ -1,6 +1,7 @@
 # Build
 build/
 cmake-build-*/
+aqtinstall.log
 
 # IDE
 .vs/
