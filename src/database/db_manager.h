@@ -26,9 +26,11 @@ public:
     bool mark_unread(int email_id);
     bool mark_deleted(int email_id);
     bool mark_undeleted(int email_id);
+    bool delete_permanently(int email_id);   // 彻底从数据库删除
     bool mark_flagged(int email_id, bool flagged);
     bool move_to_folder(int email_id, const std::string& folder);
     std::vector<Email> get_emails(int account_id, const std::string& folder);
+    std::vector<Email> get_deleted_emails(int account_id);  // 废纸篓
     Email get_email(int email_id);
     int  get_unread_count(int account_id, const std::string& folder);
     int  get_total_count(int account_id, const std::string& folder);

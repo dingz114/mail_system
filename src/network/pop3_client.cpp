@@ -53,8 +53,9 @@ std::vector<Email> Pop3Client::receive_emails(const std::string& server, int por
     // Get UIDL for dedup
     std::vector<std::pair<int, std::string>> uid_list = uidl();
     if (!last_success_) {
-        last_error_ = "UIDL failed: " + last_response_;
-        // Continue anyway — UIDL is for dedup, not critical
+        // UIDL 失败不致命，清除错误标记继续
+        last_error_.clear();
+        last_success_ = true;
     }
 
     // Build UID map for easy lookup

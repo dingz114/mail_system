@@ -202,6 +202,16 @@ bool DbManager::mark_undeleted(int email_id) {
     return conn_->query(sql);
 }
 
+bool DbManager::delete_permanently(int email_id) {
+    // 先删附件记录和同步状态（外键依赖），再删邮件
+    std::string del_att = "DELETE FROM attachments WHERE email_id=" + sql_int(email_id);
+    conn_->query(del_att);  // 忽略失败（可能无附件）
+    std::string del_sync = "DELETE FROM sync_state WHERE email_id=" + sql_int(email_id);
+    conn_->query(del_sync);
+    std::string sql = "DELETE FROM emails WHERE id=" + sql_int(email_id);
+    return conn_->query(sql);
+}
+
 bool DbManager::mark_flagged(int email_id, bool flagged) {
     std::string sql = "UPDATE emails SET is_flagged=" + sql_bool(flagged) + " WHERE id=" + sql_int(email_id);
     return conn_->query(sql);
@@ -228,6 +238,27 @@ std::vector<Email> DbManager::get_emails(int account_id, const std::string& fold
     while ((row = mysql_fetch_row(result))) {
         Email email = row_to_email(row);
         // Load attachments for this email
+        email.attachments = get_attachments(email.id);
+        email.has_attachments = !email.attachments.empty();
+        emails.push_back(email);
+    }
+    mysql_free_result(result);
+    return emails;
+}
+
+std::vector<Email> DbManager::get_deleted_emails(int account_id) {
+    std::vector<Email> emails;
+    std::ostringstream sql;
+    sql << "SELECT * FROM emails WHERE account_id=" << sql_int(account_id)
+        << " AND is_deleted=1 ORDER BY updated_at DESC";
+
+    if (!conn_->query(sql.str())) return emails;
+    MYSQL_RES* result = conn_->store_result();
+    if (!result) return emails;
+
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(result))) {
+        Email email = row_to_email(row);
         email.attachments = get_attachments(email.id);
         email.has_attachments = !email.attachments.empty();
         emails.push_back(email);

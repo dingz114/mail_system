@@ -32,6 +32,7 @@ private slots:
     void on_compose();
     void on_reply();
     void on_delete_mail();
+    void on_restore_mail();
     void on_account_changed(int index);
     void on_folder_changed();
     void on_email_selected(int email_id);
@@ -55,6 +56,7 @@ private:
     QPushButton* btn_compose_;
     QPushButton* btn_reply_;
     QPushButton* btn_delete_;
+    QPushButton* btn_restore_;
     QPushButton* btn_refresh_;
 
     // Folder tree
