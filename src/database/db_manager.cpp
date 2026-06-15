@@ -5,6 +5,10 @@
 
 DbManager::DbManager(DbConnection* conn) : conn_(conn) {}
 
+std::string DbManager::last_error() const {
+    return conn_ ? conn_->get_last_error() : "No database connection";
+}
+
 // ========== Helper functions ==========
 
 static std::string sql_str(const std::string& s) {

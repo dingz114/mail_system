@@ -3,6 +3,7 @@
 #include "email_view_widget.h"
 #include "compose_dialog.h"
 #include "account_dialog.h"
+#include "app_style.h"
 #include "../core/mime_encoder.h"
 #include "../core/mime_decoder.h"
 
@@ -22,252 +23,19 @@
 #include <QScreen>
 #include <QFrame>
 
-// ============================================================
-//  QQ 邮箱风格全局样式表
-// ============================================================
-static const char* GLOBAL_STYLE = R"(
-    QMainWindow {
-        background-color: #F2F4F7;
-    }
-    QWidget {
-        font-family: "Microsoft YaHei", "PingFang SC", "Microsoft YaHei UI", sans-serif;
-        font-size: 14px;
-        color: #333333;
-    }
-
-    /* --- 菜单 --- */
-    QMenuBar {
-        background: #FFFFFF;
-        border-bottom: 1px solid #E8EAED;
-        padding: 2px 12px;
-        font-size: 13px;
-    }
-    QMenuBar::item { padding: 6px 10px; border-radius: 2px; }
-    QMenuBar::item:selected { background: #F0F2F5; }
-    QMenu {
-        background: #FFFFFF;
-        border: 1px solid #DADCE0;
-        border-radius: 4px;
-        padding: 4px 0;
-    }
-    QMenu::item {
-        padding: 8px 36px 8px 16px;
-    }
-    QMenu::item:selected { background: #F0F2F5; }
-    QMenu::separator { height: 1px; background: #E8EAED; margin: 4px 0; }
-
-    /* --- 顶部工具栏 — QQ邮箱蓝条 --- */
-    QToolBar {
-        background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-            stop:0 #1A8CF0, stop:1 #1890FF);
-        border: none;
-        padding: 0 16px;
-        spacing: 12px;
-        min-height: 50px;
-    }
-
-    /* 工具栏按钮 */
-    QPushButton {
-        background: transparent;
-        color: #555555;
-        border: 1px solid #D0D5DD;
-        border-radius: 4px;
-        padding: 7px 18px;
-        font-size: 13px;
-    }
-    QPushButton:hover {
-        background: #F5F7FA;
-        border-color: #B0B8C1;
-    }
-
-    /* 蓝底主按钮 (写信) */
-    QPushButton#primaryBtn {
-        background: #1890FF;
-        color: #FFFFFF;
-        border: none;
-        border-radius: 4px;
-        padding: 8px 24px;
-        font-size: 14px;
-        font-weight: 500;
-    }
-    QPushButton#primaryBtn:hover { background: #40A9FF; }
-    QPushButton#primaryBtn:pressed { background: #096DD9; }
-
-    /* 危险按钮 */
-    QPushButton#dangerBtn {
-        background: transparent;
-        color: #E54545;
-        border: 1px solid #E54545;
-        border-radius: 4px;
-        padding: 7px 18px;
-    }
-    QPushButton#dangerBtn:hover { background: #FFF0F0; }
-
-    /* 顶部栏按钮（白色透明） */
-    QPushButton#toolBtn {
-        background: rgba(255,255,255,0.15);
-        color: #FFFFFF;
-        border: none;
-        border-radius: 3px;
-        padding: 6px 16px;
-        font-size: 13px;
-    }
-    QPushButton#toolBtn:hover { background: rgba(255,255,255,0.3); }
-
-    /* --- 下拉框 --- */
-    QComboBox {
-        background: #FFFFFF;
-        border: 1px solid #D0D5DD;
-        border-radius: 4px;
-        padding: 5px 30px 5px 10px;
-        font-size: 13px;
-        min-width: 120px;
-    }
-    QComboBox:hover { border-color: #1890FF; }
-    QComboBox::drop-down { border: none; width: 22px; }
-    QComboBox QAbstractItemView {
-        border: 1px solid #DADCE0;
-        border-radius: 4px;
-        padding: 2px;
-        selection-background-color: #E8F0FE;
-        selection-color: #1A73E8;
-    }
-
-    /* --- 输入框 --- */
-    QLineEdit, QTextEdit, QPlainTextEdit {
-        border: 1px solid #D0D5DD;
-        border-radius: 4px;
-        padding: 7px 10px;
-        background: #FFFFFF;
-        font-size: 14px;
-    }
-    QLineEdit:focus, QTextEdit:focus {
-        border-color: #1890FF;
-        outline: none;
-    }
-
-    /* --- 左侧文件夹树 --- */
-    QTreeWidget {
-        background: #F5F6FA;
-        border: none;
-        font-size: 14px;
-        outline: none;
-    }
-    QTreeWidget::item {
-        padding: 10px 20px;
-        border-radius: 0;
-        color: #444444;
-    }
-    QTreeWidget::item:selected {
-        background: #D6E9FF;
-        color: #1A73E8;
-        font-weight: 600;
-    }
-    QTreeWidget::item:hover:!selected {
-        background: #EAEDF2;
-    }
-
-    /* --- 邮件列表表格 --- */
-    QTableWidget {
-        background: #FFFFFF;
-        border: none;
-        gridline-color: #F2F2F2;
-        font-size: 14px;
-        outline: none;
-    }
-    QTableWidget::item {
-        padding: 12px 16px;
-        border-bottom: 1px solid #F0F1F3;
-    }
-    QTableWidget::item:selected {
-        background: #E8F0FE;
-        color: #333333;
-    }
-    QHeaderView::section {
-        background: #F8F9FB;
-        border: none;
-        border-bottom: 2px solid #E4E7ED;
-        padding: 10px 16px;
-        font-weight: 600;
-        font-size: 12px;
-        color: #8B8E94;
-    }
-
-    /* --- 分割器 --- */
-    QSplitter::handle {
-        background: #E4E7ED;
-    }
-    QSplitter::handle:horizontal { width: 1px; }
-    QSplitter::handle:vertical { height: 1px; }
-
-    /* --- 状态栏 --- */
-    QStatusBar {
-        background: #FFFFFF;
-        border-top: 1px solid #E8EAED;
-        padding: 3px 16px;
-        font-size: 12px;
-        color: #999999;
-    }
-
-    /* --- 分组框 --- */
-    QGroupBox {
-        font-weight: 600;
-        border: 1px solid #E4E7ED;
-        border-radius: 6px;
-        margin-top: 12px;
-        padding: 16px 14px 12px 14px;
-    }
-    QGroupBox::title {
-        subcontrol-origin: margin;
-        left: 16px;
-        padding: 0 8px;
-        color: #333333;
-    }
-
-    /* --- 复选框 --- */
-    QCheckBox { spacing: 8px; color: #333; }
-    QCheckBox::indicator {
-        width: 16px; height: 16px;
-        border: 2px solid #C0C4CC;
-        border-radius: 2px;
-    }
-    QCheckBox::indicator:checked {
-        background: #1890FF;
-        border-color: #1890FF;
-    }
-
-    /* --- 滚动条 --- */
-    QScrollBar:vertical {
-        background: transparent;
-        width: 8px;
-        margin: 0;
-    }
-    QScrollBar::handle:vertical {
-        background: #C0C4CC;
-        border-radius: 4px;
-        min-height: 36px;
-    }
-    QScrollBar::handle:vertical:hover { background: #A0A4AC; }
-    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-
-    /* --- 对话框 --- */
-    QDialog {
-        background: #F8F9FB;
-    }
-)";
-
 MainWindow::MainWindow(DbManager* db_mgr, QWidget* parent)
     : QMainWindow(parent), db_mgr_(db_mgr), current_account_id_(-1), current_folder_("inbox") {
-    qApp->setStyleSheet(QLatin1String(GLOBAL_STYLE));
+    qApp->setStyleSheet(UiStyle::globalStyle());
     setup_ui();
     setup_toolbar();
     setup_menu();
     load_accounts();
 
-    setWindowTitle(QStringLiteral("QQ邮箱风格邮件系统"));
-    resize(1260, 780);
+    setWindowTitle(QStringLiteral("邮件系统"));
+    resize(1180, 760);
     QRect screen = QApplication::primaryScreen()->availableGeometry();
-    move((screen.width() - width()) / 2, (screen.height() - height()) / 2);
+    move(screen.x() + (screen.width() - width()) / 2,
+         screen.y() + (screen.height() - height()) / 2);
     status_label_->setText(QStringLiteral("就绪"));
 }
 
@@ -275,33 +43,32 @@ MainWindow::~MainWindow() {}
 
 void MainWindow::setup_ui() {
     QWidget* central = new QWidget(this);
-    central->setStyleSheet("background-color: #F2F4F7;");
+    central->setObjectName("mainSurface");
     setCentralWidget(central);
     QHBoxLayout* main_layout = new QHBoxLayout(central);
     main_layout->setContentsMargins(0, 0, 0, 0);
     main_layout->setSpacing(0);
 
-    // ========== QQ邮箱风格左侧导航栏 ==========
+    // ========== 左侧导航栏 ==========
     QWidget* left_panel = new QWidget(this);
-    left_panel->setFixedWidth(200);
-    left_panel->setStyleSheet("background: #F5F6FA; border-right: 1px solid #E0E2E6;");
+    left_panel->setFixedWidth(220);
+    left_panel->setStyleSheet("background: #FFFFFF; border-right: 1px solid #E5E7EB;");
     QVBoxLayout* left_layout = new QVBoxLayout(left_panel);
     left_layout->setContentsMargins(0, 0, 0, 0);
     left_layout->setSpacing(0);
 
     // 写信按钮
     QWidget* compose_area = new QWidget(left_panel);
-    compose_area->setStyleSheet("padding: 20px 16px 12px 16px;");
+    compose_area->setStyleSheet("padding: 18px 16px 14px 16px;");
     QHBoxLayout* cl = new QHBoxLayout(compose_area);
     cl->setContentsMargins(0, 0, 0, 0);
-    QPushButton* compose_btn = new QPushButton(QStringLiteral("✏️  写 信"), left_panel);
+    QPushButton* compose_btn = new QPushButton(QStringLiteral("写信"), left_panel);
+    UiStyle::applyPrimaryButton(compose_btn, 160);
+    compose_btn->setMinimumHeight(38);
     compose_btn->setStyleSheet(
-        "QPushButton { background: #1890FF; color: #FFFFFF; border: none; border-radius: 4px; "
-        "padding: 10px 24px; font-size: 15px; font-weight: 600; }"
-        "QPushButton:hover { background: #40A9FF; }"
-        "QPushButton:pressed { background: #096DD9; }");
-    compose_btn->setMinimumHeight(40);
-    compose_btn->setCursor(Qt::PointingHandCursor);
+        "QPushButton { background: #2563EB; color: #FFFFFF; border: 1px solid #2563EB; "
+        "border-radius: 6px; font-weight: 600; }"
+        "QPushButton:hover { background: #1D4ED8; border-color: #1D4ED8; }");
     connect(compose_btn, &QPushButton::clicked, this, &MainWindow::on_compose);
     cl->addWidget(compose_btn, 1);
     left_layout->addWidget(compose_area);
@@ -309,7 +76,7 @@ void MainWindow::setup_ui() {
     // 分隔线
     QFrame* sep = new QFrame(left_panel);
     sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet("color: #E0E2E6; margin: 0 16px;");
+    sep->setStyleSheet("color: #EEF1F5; margin: 0 16px;");
     left_layout->addWidget(sep);
 
     // 文件夹
@@ -319,10 +86,10 @@ void MainWindow::setup_ui() {
     folder_tree_->setIndentation(0);
     folder_tree_->setCursor(Qt::PointingHandCursor);
 
-    inbox_item_   = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("📥  收件箱")));
-    sent_item_    = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("📤  已发送")));
-    drafts_item_  = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("📝  草稿箱")));
-    trash_item_   = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("🗑  废纸篓")));
+    inbox_item_   = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("收件箱")));
+    sent_item_    = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("已发送")));
+    drafts_item_  = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("草稿箱")));
+    trash_item_   = new QTreeWidgetItem(folder_tree_, QStringList(QStringLiteral("废纸篓")));
 
     // 图标列宽
     for (auto* item : {inbox_item_, sent_item_, drafts_item_, trash_item_})
@@ -334,11 +101,15 @@ void MainWindow::setup_ui() {
 
     // 底部账号区
     QWidget* acct_bottom = new QWidget(left_panel);
-    acct_bottom->setStyleSheet("border-top: 1px solid #E0E2E6; padding: 12px 16px;");
+    acct_bottom->setStyleSheet("border-top: 1px solid #E5E7EB; padding: 14px 16px;");
     QVBoxLayout* ab = new QVBoxLayout(acct_bottom);
     ab->setContentsMargins(0, 0, 0, 0);
+    ab->setSpacing(6);
+    QLabel* account_label = new QLabel(QStringLiteral("当前账号"), acct_bottom);
+    account_label->setStyleSheet("font-size: 12px; color: #6B7280;");
+    ab->addWidget(account_label);
     account_combo_ = new QComboBox(left_panel);
-    account_combo_->setMinimumWidth(150);
+    account_combo_->setMinimumWidth(180);
     ab->addWidget(account_combo_);
     left_layout->addWidget(acct_bottom);
 
@@ -354,7 +125,7 @@ void MainWindow::setup_ui() {
     right_splitter_->addWidget(email_view_);
     right_splitter_->setStretchFactor(0, 3);
     right_splitter_->setStretchFactor(1, 4);
-    right_splitter_->setStyleSheet("QSplitter::handle { background: #F2F4F7; }");
+    right_splitter_->setStyleSheet("QSplitter::handle { background: #E5E7EB; }");
 
     main_layout->addWidget(right_splitter_, 1);
 
@@ -366,7 +137,7 @@ void MainWindow::setup_ui() {
 
     // 状态栏
     status_label_ = new QLabel(this);
-    status_label_->setStyleSheet("color: #999; font-size: 12px; padding: 2px 8px;");
+    status_label_->setStyleSheet("color: #6B7280; font-size: 12px; padding: 2px 8px;");
     statusBar()->addWidget(status_label_);
     statusBar()->setStyleSheet("QStatusBar { background: #FFFFFF; border-top: 1px solid #E8EAED; }");
 }
@@ -376,49 +147,42 @@ void MainWindow::setup_toolbar() {
     toolbar_->setMovable(false);
     toolbar_->setFloatable(false);
 
-    // 品牌
-    QLabel* brand = new QLabel(QStringLiteral("  ✉  邮件系统"), this);
-    brand->setStyleSheet("font-size: 18px; font-weight: 700; color: #FFFFFF; padding: 0 12px;");
+    QLabel* brand = new QLabel(QStringLiteral("邮件系统"), this);
+    brand->setStyleSheet("font-size: 18px; font-weight: 700; color: #111827; padding: 0 10px 0 2px;");
     toolbar_->addWidget(brand);
 
     QWidget* spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar_->addWidget(spacer);
 
-    btn_receive_ = new QPushButton(QStringLiteral("📥 收信"), this);
-    btn_receive_->setObjectName("toolBtn");
-    btn_receive_->setCursor(Qt::PointingHandCursor);
+    btn_receive_ = new QPushButton(QStringLiteral("收信"), this);
+    UiStyle::applySecondaryButton(btn_receive_, 76);
     toolbar_->addWidget(btn_receive_);
     connect(btn_receive_, &QPushButton::clicked, this, &MainWindow::on_receive);
 
-    btn_compose_ = new QPushButton(QStringLiteral("✏️ 写信"), this);
-    btn_compose_->setObjectName("toolBtn");
-    btn_compose_->setCursor(Qt::PointingHandCursor);
+    btn_compose_ = new QPushButton(QStringLiteral("写信"), this);
+    UiStyle::applyPrimaryButton(btn_compose_, 76);
     toolbar_->addWidget(btn_compose_);
     connect(btn_compose_, &QPushButton::clicked, this, &MainWindow::on_compose);
 
-    btn_reply_ = new QPushButton(QStringLiteral("↩ 回复"), this);
-    btn_reply_->setObjectName("toolBtn");
-    btn_reply_->setCursor(Qt::PointingHandCursor);
+    btn_reply_ = new QPushButton(QStringLiteral("回复"), this);
+    UiStyle::applySecondaryButton(btn_reply_, 76);
     toolbar_->addWidget(btn_reply_);
     connect(btn_reply_, &QPushButton::clicked, this, &MainWindow::on_reply);
 
-    btn_delete_ = new QPushButton(QStringLiteral("🗑 删除"), this);
-    btn_delete_->setObjectName("toolBtn");
-    btn_delete_->setCursor(Qt::PointingHandCursor);
+    btn_delete_ = new QPushButton(QStringLiteral("删除"), this);
+    UiStyle::applyDangerButton(btn_delete_, 76);
     toolbar_->addWidget(btn_delete_);
     connect(btn_delete_, &QPushButton::clicked, this, &MainWindow::on_delete_mail);
 
-    btn_restore_ = new QPushButton(QStringLiteral("↩ 恢复"), this);
-    btn_restore_->setObjectName("toolBtn");
-    btn_restore_->setCursor(Qt::PointingHandCursor);
+    btn_restore_ = new QPushButton(QStringLiteral("恢复"), this);
+    UiStyle::applySecondaryButton(btn_restore_, 76);
     btn_restore_->setVisible(true);
     toolbar_->addWidget(btn_restore_);
     connect(btn_restore_, &QPushButton::clicked, this, &MainWindow::on_restore_mail);
 
-    btn_refresh_ = new QPushButton(QStringLiteral("↻ 刷新"), this);
-    btn_refresh_->setObjectName("toolBtn");
-    btn_refresh_->setCursor(Qt::PointingHandCursor);
+    btn_refresh_ = new QPushButton(QStringLiteral("刷新"), this);
+    UiStyle::applyGhostButton(btn_refresh_, 76);
     toolbar_->addWidget(btn_refresh_);
     connect(btn_refresh_, &QPushButton::clicked, this, &MainWindow::on_refresh);
 }
@@ -539,11 +303,11 @@ void MainWindow::update_folder_counts() {
     if (current_account_id_ < 0) return;
     int unread = db_mgr_->get_unread_count(current_account_id_, "inbox");
     inbox_item_->setText(0, unread > 0
-        ? QStringLiteral("📥  收件箱 (%1)").arg(unread) : QStringLiteral("📥  收件箱"));
+        ? QStringLiteral("收件箱 (%1)").arg(unread) : QStringLiteral("收件箱"));
     int sent = db_mgr_->get_total_count(current_account_id_, "sent");
-    sent_item_->setText(0, sent > 0 ? QStringLiteral("📤  已发送 (%1)").arg(sent) : QStringLiteral("📤  已发送"));
+    sent_item_->setText(0, sent > 0 ? QStringLiteral("已发送 (%1)").arg(sent) : QStringLiteral("已发送"));
     int drafts = db_mgr_->get_total_count(current_account_id_, "drafts");
-    drafts_item_->setText(0, drafts > 0 ? QStringLiteral("📝  草稿箱 (%1)").arg(drafts) : QStringLiteral("📝  草稿箱"));
+    drafts_item_->setText(0, drafts > 0 ? QStringLiteral("草稿箱 (%1)").arg(drafts) : QStringLiteral("草稿箱"));
 }
 
 void MainWindow::on_email_selected(int email_id) {
@@ -613,17 +377,45 @@ void MainWindow::on_receive() {
             status_label_->setText(QStringLiteral("接收失败 — %1").arg(QString::fromStdString(err)));
         } else {
             MimeDecoder dec; int new_count = 0;
+            int failed_count = 0;
+            std::string first_save_error;
             for (auto& email : emails) {
-                if (!email.pop3_uid.empty() && db_mgr_->is_uid_downloaded(acc.id, email.pop3_uid)) continue;
-                email = dec.decode(email.body_plain, acc.id);
-                email.folder = "inbox";
-                int eid = db_mgr_->save_email(email);
+                std::string uid = email.pop3_uid;
+                if (!uid.empty() && db_mgr_->is_uid_downloaded(acc.id, uid)) continue;
+
+                Email decoded = dec.decode(email.body_plain, acc.id);
+                decoded.pop3_uid = uid;
+                decoded.folder = "inbox";
+                if (decoded.received_date.empty()) {
+                    auto now = std::time(nullptr);
+                    char buf[64];
+                    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+                    decoded.received_date = buf;
+                }
+
+                int eid = db_mgr_->save_email(decoded);
                 if (eid > 0) {
-                    if (!email.pop3_uid.empty()) db_mgr_->mark_uid_downloaded(acc.id, email.pop3_uid, eid);
+                    if (!uid.empty()) db_mgr_->mark_uid_downloaded(acc.id, uid, eid);
                     new_count++;
+                } else {
+                    failed_count++;
+                    if (first_save_error.empty()) {
+                        first_save_error = db_mgr_->last_error();
+                    }
                 }
             }
-            status_label_->setText(QStringLiteral("接收完成 — %1 封新邮件").arg(new_count));
+            if (failed_count > 0) {
+                QString msg = QStringLiteral("已接收 %1 封，%2 封保存失败")
+                                  .arg(new_count).arg(failed_count);
+                if (!first_save_error.empty()) {
+                    msg += QStringLiteral("\n\n数据库错误：%1").arg(QString::fromStdString(first_save_error));
+                }
+                QMessageBox::warning(this, QStringLiteral("部分邮件保存失败"), msg);
+                status_label_->setText(QStringLiteral("接收完成 — %1 封新邮件，%2 封保存失败")
+                                           .arg(new_count).arg(failed_count));
+            } else {
+                status_label_->setText(QStringLiteral("接收完成 — %1 封新邮件").arg(new_count));
+            }
             load_emails(current_folder_); update_folder_counts();
         }
         btn_receive_->setEnabled(true); w->deleteLater();

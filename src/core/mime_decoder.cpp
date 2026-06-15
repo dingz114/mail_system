@@ -4,6 +4,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -567,21 +568,64 @@ void MimeDecoder::parse_address(const std::string& value, std::string& name, std
 }
 
 std::string MimeDecoder::parse_date(const std::string& date_str) const {
-    // Try to parse common date formats and return ISO 8601
-    // For now, return the date string as-is — proper parsing is complex
-    // But we need it set for the database
+    // MySQL DATETIME only accepts "YYYY-MM-DD HH:MM:SS". Real mail Date
+    // headers are usually RFC 5322, e.g. "Mon, 15 Jun 2026 10:20:05 +0800".
     if (date_str.empty()) {
-        // Return current time
         auto now = std::time(nullptr);
         char buf[64];
         strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
         return std::string(buf);
     }
-    // Strip leading/trailing whitespace
+
     size_t s = date_str.find_first_not_of(" \t\r\n");
     size_t e = date_str.find_last_not_of(" \t\r\n");
-    if (s != std::string::npos && e != std::string::npos) {
-        return date_str.substr(s, e - s + 1);
+    if (s == std::string::npos || e == std::string::npos) {
+        auto now = std::time(nullptr);
+        char buf[64];
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        return std::string(buf);
     }
-    return date_str;
+
+    std::string value = date_str.substr(s, e - s + 1);
+
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (std::sscanf(value.c_str(), "%d-%d-%d %d:%d:%d",
+                    &year, &month, &day, &hour, &minute, &second) == 6) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                      year, month, day, hour, minute, second);
+        return std::string(buf);
+    }
+
+    size_t comma = value.find(',');
+    if (comma != std::string::npos) {
+        value = value.substr(comma + 1);
+        size_t start = value.find_first_not_of(" \t");
+        if (start != std::string::npos) value = value.substr(start);
+    }
+
+    char month_name[8] = {0};
+    if (std::sscanf(value.c_str(), "%d %7s %d %d:%d:%d",
+                    &day, month_name, &year, &hour, &minute, &second) == 6) {
+        std::string mon = month_name;
+        std::transform(mon.begin(), mon.end(), mon.begin(), ::tolower);
+        static const std::map<std::string, int> months = {
+            {"jan", 1}, {"feb", 2}, {"mar", 3}, {"apr", 4},
+            {"may", 5}, {"jun", 6}, {"jul", 7}, {"aug", 8},
+            {"sep", 9}, {"oct", 10}, {"nov", 11}, {"dec", 12}
+        };
+        auto it = months.find(mon.substr(0, 3));
+        if (it != months.end()) {
+            month = it->second;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                          year, month, day, hour, minute, second);
+            return std::string(buf);
+        }
+    }
+
+    auto now = std::time(nullptr);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    return std::string(buf);
 }

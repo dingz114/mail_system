@@ -50,6 +50,8 @@ public:
     std::vector<std::pair<int, std::pair<std::string, std::string>>> get_contacts(int account_id);
     // Returns: vector of <id, <name, email>>
 
+    std::string last_error() const;
+
 private:
     DbConnection* conn_;
 

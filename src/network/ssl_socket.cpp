@@ -194,10 +194,8 @@ std::string SslSocket::recv_until(const std::string& terminator, int timeout_sec
 
         result.append(buffer, bytes);
 
-        if (result.size() >= terminator.size()) {
-            if (result.compare(result.size() - terminator.size(), terminator.size(), terminator) == 0) {
-                break;
-            }
+        if (result.find(terminator) != std::string::npos) {
+            break;
         }
     }
     return result;

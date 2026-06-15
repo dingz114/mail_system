@@ -24,9 +24,9 @@ EmailViewWidget::EmailViewWidget(QWidget* parent) : QWidget(parent) {
     header_label_->setWordWrap(true);
     header_label_->setStyleSheet(
         "QLabel {"
-        "  background: #F8F9FB;"
-        "  padding: 24px 32px;"
-        "  border-bottom: 1px solid #EBEDF0;"
+        "  background: #FFFFFF;"
+        "  padding: 28px 36px 22px 36px;"
+        "  border-bottom: 1px solid #E5E7EB;"
         "  margin: 0;"
         "}");
     il->addWidget(header_label_);
@@ -38,10 +38,10 @@ EmailViewWidget::EmailViewWidget(QWidget* parent) : QWidget(parent) {
     body_browser_->setStyleSheet(
         "QTextBrowser {"
         "  border: none;"
-        "  padding: 24px 32px;"
+        "  padding: 26px 36px;"
         "  font-size: 15px;"
         "  line-height: 1.8;"
-        "  color: #333333;"
+        "  color: #1F2937;"
         "  background: #FFFFFF;"
         "}");
     il->addWidget(body_browser_, 1);
@@ -49,7 +49,7 @@ EmailViewWidget::EmailViewWidget(QWidget* parent) : QWidget(parent) {
     // 附件
     attachments_widget_ = new QWidget(this);
     QVBoxLayout* al = new QVBoxLayout(attachments_widget_);
-    al->setContentsMargins(24, 12, 24, 24);
+    al->setContentsMargins(36, 8, 36, 28);
     il->addWidget(attachments_widget_);
 
     scroll->setWidget(inner);
@@ -62,26 +62,25 @@ void EmailViewWidget::show_email(const Email& email) {
 
     QString html;
     html += "<table style='width:100%; border-collapse:collapse;'>";
-    // 主题 — QQ邮箱大号黑体
-    html += "<tr><td colspan='2' style='font-size:22px; font-weight:600; color:#1A1A1A; padding-bottom:18px;'>"
+    html += "<tr><td colspan='2' style='font-size:22px; font-weight:700; color:#111827; padding-bottom:18px;'>"
             + esc(email.subject.empty() ? "(无主题)" : email.subject) + "</td></tr>";
 
     // 发件人
     QString from = email.sender_name.empty()
         ? QString::fromStdString(email.sender_addr)
         : QString::fromStdString(email.sender_name + " <" + email.sender_addr + ">");
-    html += QStringLiteral("<tr><td style='width:56px; color:#8C8C8C; padding:5px 0;'>发件人</td>"
-                           "<td style='color:#1A1A1A;'>%1</td></tr>").arg(from.toHtmlEscaped());
+    html += QStringLiteral("<tr><td style='width:64px; color:#6B7280; padding:5px 0;'>发件人</td>"
+                           "<td style='color:#111827;'>%1</td></tr>").arg(from.toHtmlEscaped());
 
-    html += QStringLiteral("<tr><td style='color:#8C8C8C; padding:5px 0;'>收件人</td>"
-                           "<td style='color:#1A1A1A;'>%1</td></tr>").arg(esc(Email::join_recipients(email.to)));
+    html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>收件人</td>"
+                           "<td style='color:#111827;'>%1</td></tr>").arg(esc(Email::join_recipients(email.to)));
 
     if (!email.cc.empty())
-        html += QStringLiteral("<tr><td style='color:#8C8C8C; padding:5px 0;'>抄　送</td>"
-                               "<td style='color:#1A1A1A;'>%1</td></tr>").arg(esc(Email::join_recipients(email.cc)));
+        html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>抄送</td>"
+                               "<td style='color:#111827;'>%1</td></tr>").arg(esc(Email::join_recipients(email.cc)));
 
-    html += QStringLiteral("<tr><td style='color:#8C8C8C; padding:5px 0;'>时　间</td>"
-                           "<td style='color:#999;'>%1</td></tr>").arg(esc(email.received_date));
+    html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>时间</td>"
+                           "<td style='color:#6B7280;'>%1</td></tr>").arg(esc(email.received_date));
     html += "</table>";
     header_label_->setText(html);
 
@@ -91,7 +90,7 @@ void EmailViewWidget::show_email(const Email& email) {
     else {
         QString plain = QString::fromStdString(email.body_plain).toHtmlEscaped();
         plain.replace("\n", "<br>");
-        body_browser_->setHtml("<div style='font-size:15px; line-height:1.9; color:#333;'>" + plain + "</div>");
+        body_browser_->setHtml("<div style='font-size:15px; line-height:1.9; color:#1F2937; max-width: 920px;'>" + plain + "</div>");
     }
 
     // 附件
@@ -99,26 +98,27 @@ void EmailViewWidget::show_email(const Email& email) {
     if (al) { QLayoutItem* c; while ((c = al->takeAt(0))) { delete c->widget(); delete c; } }
     if (email.has_attachments && !email.attachments.empty()) {
         QFrame* div = new QFrame(attachments_widget_);
-        div->setStyleSheet("border-top:1px solid #F0F0F0; margin: 8px 0;");
+        div->setStyleSheet("border-top:1px solid #E5E7EB; margin: 8px 0;");
         al->addWidget(div);
 
-        QLabel* hdr = new QLabel(QStringLiteral("📎 附件（%1 个）").arg(email.attachments.size()), attachments_widget_);
-        hdr->setStyleSheet("font-weight:600; color:#555; padding: 4px 0; font-size:14px;");
+        QLabel* hdr = new QLabel(QStringLiteral("附件（%1 个）").arg(email.attachments.size()), attachments_widget_);
+        hdr->setStyleSheet("font-weight:600; color:#374151; padding: 8px 0 4px 0; font-size:14px;");
         al->addWidget(hdr);
 
         for (const auto& att : email.attachments) {
             QFrame* card = new QFrame(attachments_widget_);
-            card->setStyleSheet("QFrame{background:#F8F9FB; border:1px solid #EBEEF5; border-radius:8px; padding:14px 18px; margin:4px 0;}");
+            card->setStyleSheet("QFrame{background:#F8FAFC; border:1px solid #E5E7EB; border-radius:8px; padding:12px 16px; margin:4px 0;}");
             QHBoxLayout* cl = new QHBoxLayout(card); cl->setContentsMargins(0,0,0,0);
 
             QString ext = QString::fromStdString(att.file_name).section('.', -1).toLower();
-            QString icon = QStringLiteral("📄");
-            if (ext == "pdf") icon = QStringLiteral("📕");
-            else if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif") icon = QStringLiteral("🖼");
-            else if (ext == "zip" || ext == "rar") icon = QStringLiteral("📦");
-            else if (ext == "doc" || ext == "docx") icon = QStringLiteral("📝");
+            QString icon = QStringLiteral("FILE");
+            if (ext == "pdf") icon = QStringLiteral("PDF");
+            else if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif") icon = QStringLiteral("IMG");
+            else if (ext == "zip" || ext == "rar") icon = QStringLiteral("ZIP");
+            else if (ext == "doc" || ext == "docx") icon = QStringLiteral("DOC");
 
             QLabel* ico = new QLabel(icon, card); ico->setStyleSheet("font-size:20px; border:none; background:transparent;");
+            ico->setFixedWidth(44);
             cl->addWidget(ico);
             QLabel* nm = new QLabel(QString::fromStdString(att.file_name), card);
             nm->setStyleSheet("font-weight:500; color:#333; border:none; background:transparent;");
@@ -137,9 +137,9 @@ void EmailViewWidget::show_email(const Email& email) {
 
 void EmailViewWidget::clear() {
     header_label_->setText(
-        "<div style='text-align:center; padding:80px 0; color:#CCC;'>"
-        "<div style='font-size:56px; margin-bottom:16px;'>📬</div>"
-        "<div style='font-size:15px; color:#B0B4BB;'>" + QStringLiteral("选择一封邮件查看详情") + "</div></div>");
+        "<div style='text-align:center; padding:72px 0 60px 0;'>"
+        "<div style='font-size:18px; font-weight:600; color:#6B7280; margin-bottom:8px;'>" + QStringLiteral("未选择邮件") + "</div>"
+        "<div style='font-size:14px; color:#9CA3AF;'>" + QStringLiteral("从左侧列表选择一封邮件查看详情") + "</div></div>");
     body_browser_->clear();
     QLayout* al = attachments_widget_->layout();
     if (al) { QLayoutItem* c; while ((c = al->takeAt(0))) { delete c->widget(); delete c; } }

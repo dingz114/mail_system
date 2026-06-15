@@ -1,4 +1,5 @@
 #include "compose_dialog.h"
+#include "app_style.h"
 #include <ctime>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -12,19 +13,25 @@
 
 ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     : QDialog(parent), db_mgr_(db_mgr), account_id_(account_id), draft_id_(-1) {
-    setWindowTitle(QStringLiteral("✏️ 写邮件"));
-    resize(750, 580);
-    setMinimumSize(600, 400);
+    setWindowTitle(QStringLiteral("写邮件"));
+    resize(820, 640);
+    setMinimumSize(680, 480);
 
     QVBoxLayout* main_layout = new QVBoxLayout(this);
-    main_layout->setSpacing(8);
-    main_layout->setContentsMargins(16, 16, 16, 16);
+    main_layout->setSpacing(12);
+    main_layout->setContentsMargins(22, 22, 22, 18);
+
+    auto field_style = QStringLiteral(
+        "QLineEdit { border: none; border-bottom: 1px solid #E5E7EB; "
+        "border-radius: 0; padding: 9px 0; font-size: 14px; background: transparent; }"
+        "QLineEdit:focus { border-bottom: 2px solid #2563EB; }");
+    auto label_style = QStringLiteral("font-weight: 600; min-width: 64px; color: #4B5563;");
 
     // --- 发件人 ---
     QHBoxLayout* from_layout = new QHBoxLayout();
     QLabel* from_label = new QLabel(QStringLiteral("发件人"), this);
-    from_label->setStyleSheet("font-weight: 600; min-width: 56px; color: #555;");
-    from_label->setFixedWidth(56);
+    from_label->setStyleSheet(label_style);
+    from_label->setFixedWidth(64);
     from_layout->addWidget(from_label);
 
     from_combo_ = new QComboBox(this);
@@ -43,27 +50,24 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     // --- 分隔 ---
     QFrame* div1 = new QFrame(this);
     div1->setFrameShape(QFrame::HLine);
-    div1->setStyleSheet("color: #F0F0F0;");
+    div1->setStyleSheet("color: #E5E7EB;");
     main_layout->addWidget(div1);
 
     // --- 收件人 ---
     QHBoxLayout* to_layout = new QHBoxLayout();
     QLabel* to_label = new QLabel(QStringLiteral("收件人"), this);
-    to_label->setStyleSheet("font-weight: 600; min-width: 56px; color: #555;");
-    to_label->setFixedWidth(56);
+    to_label->setStyleSheet(label_style);
+    to_label->setFixedWidth(64);
     to_layout->addWidget(to_label);
 
     to_edit_ = new QLineEdit(this);
     to_edit_->setPlaceholderText(QStringLiteral("收件人邮箱地址，多人用分号 ; 分隔"));
-    to_edit_->setStyleSheet("QLineEdit { border: none; border-radius: 0; padding: 8px 0; font-size: 14px; "
-                            "border-bottom: 1px solid #F0F0F0; }"
-                            "QLineEdit:focus { border-bottom: 2px solid #1890FF; }");
+    to_edit_->setStyleSheet(field_style);
     to_layout->addWidget(to_edit_, 1);
 
     QPushButton* cc_btn = new QPushButton(QStringLiteral("抄送"), this);
     cc_btn->setFlat(true);
-    cc_btn->setStyleSheet("QPushButton { color: #1890FF; border: none; font-size: 12px; padding: 4px 8px; }"
-                          "QPushButton:hover { background: #ECF5FF; border-radius: 4px; }");
+    UiStyle::applyGhostButton(cc_btn, 54);
     connect(cc_btn, &QPushButton::clicked, [this]() {
         cc_edit_->setVisible(!cc_edit_->isVisible());
     });
@@ -72,9 +76,9 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
 
     // --- 抄送 ---
     QHBoxLayout* cc_layout = new QHBoxLayout();
-    QLabel* cc_label = new QLabel(QStringLiteral("抄　送"), this);
-    cc_label->setStyleSheet("font-weight: 600; min-width: 56px; color: #555;");
-    cc_label->setFixedWidth(56);
+    QLabel* cc_label = new QLabel(QStringLiteral("抄送"), this);
+    cc_label->setStyleSheet(label_style);
+    cc_label->setFixedWidth(64);
     cc_layout->addWidget(cc_label);
 
     cc_edit_ = new QLineEdit(this);
@@ -86,9 +90,9 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
 
     // --- 主题 ---
     QHBoxLayout* subj_layout = new QHBoxLayout();
-    QLabel* subj_label = new QLabel(QStringLiteral("主　题"), this);
-    subj_label->setStyleSheet("font-weight: 600; min-width: 56px; color: #555;");
-    subj_label->setFixedWidth(56);
+    QLabel* subj_label = new QLabel(QStringLiteral("主题"), this);
+    subj_label->setStyleSheet(label_style);
+    subj_label->setFixedWidth(64);
     subj_layout->addWidget(subj_label);
 
     subject_edit_ = new QLineEdit(this);
@@ -100,7 +104,7 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     // --- 分隔 ---
     QFrame* div2 = new QFrame(this);
     div2->setFrameShape(QFrame::HLine);
-    div2->setStyleSheet("color: #F0F0F0;");
+    div2->setStyleSheet("color: #E5E7EB;");
     main_layout->addWidget(div2);
 
     // --- 正文 ---
@@ -108,17 +112,17 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     body_edit_->setPlaceholderText(QStringLiteral("在这里输入邮件正文..."));
     body_edit_->setAcceptRichText(true);
     body_edit_->setStyleSheet(
-        "QTextEdit { border: none; font-size: 15px; line-height: 1.6; padding: 4px 0; }");
+        "QTextEdit { border: 1px solid #E5E7EB; border-radius: 8px; font-size: 15px; "
+        "line-height: 1.7; padding: 12px; background: #FFFFFF; }"
+        "QTextEdit:focus { border-color: #2563EB; }");
     main_layout->addWidget(body_edit_, 1);
 
     // --- 底部工具栏 ---
     QHBoxLayout* bottom_bar = new QHBoxLayout();
     bottom_bar->setContentsMargins(0, 8, 0, 0);
 
-    attach_btn_ = new QPushButton(QStringLiteral("📎 添加附件"), this);
-    attach_btn_->setStyleSheet("QPushButton { border: 1px dashed #D9D9D9; border-radius: 6px; "
-                               "padding: 6px 14px; color: #666; background: transparent; }"
-                               "QPushButton:hover { border-color: #1890FF; color: #1890FF; }");
+    attach_btn_ = new QPushButton(QStringLiteral("添加附件"), this);
+    UiStyle::applySecondaryButton(attach_btn_, 96);
     connect(attach_btn_, &QPushButton::clicked, this, &ComposeDialog::on_attach);
     bottom_bar->addWidget(attach_btn_);
 
@@ -126,7 +130,7 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     attach_list_ = new QListWidget(this);
     attach_list_->setMaximumHeight(80);
     attach_list_->setStyleSheet(
-        "QListWidget { border: 1px solid #F0F0F0; border-radius: 6px; padding: 4px; font-size: 12px; }"
+        "QListWidget { border: 1px solid #E5E7EB; border-radius: 6px; padding: 4px; font-size: 12px; background:#FFFFFF; }"
         "QListWidget::item { padding: 2px 8px; }");
     attach_list_->setVisible(false);
     bottom_bar->addWidget(attach_list_, 1);
@@ -134,20 +138,17 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     bottom_bar->addStretch();
 
     QPushButton* discard_btn = new QPushButton(QStringLiteral("丢弃"), this);
+    UiStyle::applyGhostButton(discard_btn, 72);
     connect(discard_btn, &QPushButton::clicked, this, &QDialog::reject);
     bottom_bar->addWidget(discard_btn);
 
     draft_btn_ = new QPushButton(QStringLiteral("保存草稿"), this);
+    UiStyle::applySecondaryButton(draft_btn_, 96);
     connect(draft_btn_, &QPushButton::clicked, this, &ComposeDialog::on_save_draft);
     bottom_bar->addWidget(draft_btn_);
 
-    send_btn_ = new QPushButton(QStringLiteral("发　送"), this);
-    send_btn_->setObjectName("primaryBtn");
-    send_btn_->setStyleSheet(
-        "QPushButton { background: #1890FF; color: #FFF; border: none; border-radius: 6px; "
-        "padding: 8px 28px; font-size: 14px; font-weight: 600; }"
-        "QPushButton:hover { background: #40A9FF; }"
-        "QPushButton:pressed { background: #096DD9; }");
+    send_btn_ = new QPushButton(QStringLiteral("发送"), this);
+    UiStyle::applyPrimaryButton(send_btn_, 96);
     connect(send_btn_, &QPushButton::clicked, this, &ComposeDialog::on_send);
     bottom_bar->addWidget(send_btn_);
 
@@ -163,7 +164,7 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
 }
 
 void ComposeDialog::set_reply_mode(const Email& original_email, bool reply_all) {
-    setWindowTitle(QStringLiteral("↩ 回复邮件"));
+    setWindowTitle(QStringLiteral("回复邮件"));
 
     if (reply_all) {
         to_edit_->setText(QString::fromStdString(Email::join_recipients(original_email.to)));
@@ -198,7 +199,7 @@ void ComposeDialog::set_reply_mode(const Email& original_email, bool reply_all) 
 }
 
 void ComposeDialog::set_forward_mode(const Email& original_email) {
-    setWindowTitle(QStringLiteral("↪ 转发邮件"));
+    setWindowTitle(QStringLiteral("转发邮件"));
     std::string fwd_subject = original_email.subject;
     if (fwd_subject.find("Fwd:") != 0) {
         fwd_subject = "Fwd: " + fwd_subject;
@@ -220,7 +221,7 @@ void ComposeDialog::load_draft(const Email& draft) {
     cc_edit_->setText(QString::fromStdString(Email::join_recipients(draft.cc)));
     subject_edit_->setText(QString::fromStdString(draft.subject));
     body_edit_->setPlainText(QString::fromStdString(draft.body_plain));
-    setWindowTitle(QStringLiteral("📝 编辑草稿"));
+    setWindowTitle(QStringLiteral("编辑草稿"));
 }
 
 Email ComposeDialog::get_email() const {

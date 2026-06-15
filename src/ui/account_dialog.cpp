@@ -1,4 +1,5 @@
 #include "account_dialog.h"
+#include "app_style.h"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -15,9 +16,8 @@
 AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
     : QDialog(parent), db_mgr_(db_mgr), edit_id_(-1) {
     setWindowTitle(QStringLiteral("账号设置"));
-    setMinimumWidth(500);
+    setMinimumWidth(560);
     setMaximumHeight(700);
-    setStyleSheet("QDialog { background: #F8FAFC; }");
 
     // 外层布局：标题 + 可滚动区域 + 按钮
     QVBoxLayout* outer_layout = new QVBoxLayout(this);
@@ -25,18 +25,18 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
     outer_layout->setSpacing(0);
 
     // 固定标题
-    QLabel* title = new QLabel(QStringLiteral("📧 邮箱账号配置"), this);
-    title->setStyleSheet("font-size: 17px; font-weight: 700; color: #1A1A1A; padding: 16px 24px 8px 24px;");
+    QLabel* title = new QLabel(QStringLiteral("邮箱账号配置"), this);
+    title->setStyleSheet("font-size: 18px; font-weight: 700; color: #111827; padding: 18px 26px 8px 26px;");
     outer_layout->addWidget(title);
 
     // 可滚动区域
     QScrollArea* scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setStyleSheet("QScrollArea { border: none; background: #F8FAFC; }");
+    scroll->setStyleSheet("QScrollArea { border: none; background: #F4F6F8; }");
 
     QWidget* content = new QWidget();
-    content->setStyleSheet("background: #F8FAFC;");
+    content->setStyleSheet("background: #F4F6F8;");
     QVBoxLayout* main_layout = new QVBoxLayout(content);
     main_layout->setSpacing(12);
     main_layout->setContentsMargins(24, 8, 24, 16);
@@ -69,9 +69,9 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
 
     // 授权码提示
     QLabel* auth_hint = new QLabel(
-        QStringLiteral("⚠ QQ邮箱/163邮箱需在网页版设置中开启SMTP服务并获取授权码，不能用登录密码"),
+        QStringLiteral("QQ邮箱/163邮箱需在网页版设置中开启 SMTP/POP3 服务，并使用授权码登录。"),
         this);
-    auth_hint->setStyleSheet("color: #E6A23C; font-size: 12px; padding: 4px 0;");
+    auth_hint->setStyleSheet("color: #B45309; font-size: 12px; padding: 4px 0;");
     auth_hint->setWordWrap(true);
     basic_form->addRow(QString(), auth_hint);
 
@@ -97,7 +97,7 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
     main_layout->addLayout(provider_layout);
 
     // --- SMTP ---
-    QGroupBox* smtp_group = new QGroupBox(QStringLiteral("📤 SMTP 发送服务器"), this);
+    QGroupBox* smtp_group = new QGroupBox(QStringLiteral("SMTP 发送服务器"), this);
     QFormLayout* smtp_form = new QFormLayout(smtp_group);
     smtp_form->setSpacing(10);
 
@@ -116,7 +116,7 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
     main_layout->addWidget(smtp_group);
 
     // --- POP3 ---
-    QGroupBox* pop3_group = new QGroupBox(QStringLiteral("📥 POP3 接收服务器"), this);
+    QGroupBox* pop3_group = new QGroupBox(QStringLiteral("POP3 接收服务器"), this);
     QFormLayout* pop3_form = new QFormLayout(pop3_group);
     pop3_form->setSpacing(10);
 
@@ -143,16 +143,13 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
     test_layout->setContentsMargins(0, 4, 0, 0);
     test_layout->setSpacing(8);
 
-    test_smtp_btn_ = new QPushButton(QStringLiteral("🔍 测试发送 (SMTP)"), this);
-    test_smtp_btn_->setStyleSheet(
-        "QPushButton { background: #FFF; border: 1px solid #D9D9D9; border-radius: 6px; "
-        "padding: 8px 16px; color: #555; font-size: 12px; }"
-        "QPushButton:hover { border-color: #1890FF; color: #1890FF; }");
+    test_smtp_btn_ = new QPushButton(QStringLiteral("测试发送 SMTP"), this);
+    UiStyle::applySecondaryButton(test_smtp_btn_, 128);
     connect(test_smtp_btn_, &QPushButton::clicked, this, &AccountDialog::on_test_smtp);
     test_layout->addWidget(test_smtp_btn_);
 
-    test_pop3_btn_ = new QPushButton(QStringLiteral("🔍 测试接收 (POP3)"), this);
-    test_pop3_btn_->setStyleSheet(test_smtp_btn_->styleSheet());
+    test_pop3_btn_ = new QPushButton(QStringLiteral("测试接收 POP3"), this);
+    UiStyle::applySecondaryButton(test_pop3_btn_, 128);
     connect(test_pop3_btn_, &QPushButton::clicked, this, &AccountDialog::on_test_pop3);
     test_layout->addWidget(test_pop3_btn_);
 
@@ -165,15 +162,13 @@ AccountDialog::AccountDialog(DbManager* db_mgr, QWidget* parent)
 
     cancel_btn_ = new QPushButton(QStringLiteral("取消"), this);
     cancel_btn_->setFixedHeight(36);
+    UiStyle::applyGhostButton(cancel_btn_, 78);
     connect(cancel_btn_, &QPushButton::clicked, this, &QDialog::reject);
     btn_layout->addWidget(cancel_btn_);
 
-    save_btn_ = new QPushButton(QStringLiteral("保　存"), this);
+    save_btn_ = new QPushButton(QStringLiteral("保存"), this);
     save_btn_->setFixedHeight(36);
-    save_btn_->setStyleSheet(
-        "QPushButton { background: #1890FF; color: #FFF; border: none; border-radius: 6px; "
-        "padding: 8px 28px; font-weight: 600; }"
-        "QPushButton:hover { background: #40A9FF; }");
+    UiStyle::applyPrimaryButton(save_btn_, 92);
     connect(save_btn_, &QPushButton::clicked, this, &AccountDialog::on_save);
     btn_layout->addWidget(save_btn_);
 
@@ -278,7 +273,7 @@ void AccountDialog::on_test_smtp() {
     connect(watcher, &QFutureWatcher<std::string>::finished, [this, watcher]() {
         std::string result = watcher->result();
         test_smtp_btn_->setEnabled(true);
-        test_smtp_btn_->setText(QStringLiteral("🔍 测试发送 (SMTP)"));
+        test_smtp_btn_->setText(QStringLiteral("测试发送 SMTP"));
 
         if (result.find("成功") == 0) {
             QMessageBox::information(this, QStringLiteral("SMTP 测试通过"),
@@ -303,17 +298,31 @@ void AccountDialog::on_test_pop3() {
             return "连接失败: " + pop3.get_last_error();
         }
         pop3.recv_line();
+        if (!pop3.is_success()) {
+            return "服务器问候失败: " + pop3.get_last_response();
+        }
+        if (!pop3.user(test_acc.username)) {
+            return "用户名验证失败: " + pop3.get_last_response();
+        }
+        if (!pop3.pass(test_acc.password)) {
+            return "授权码/密码验证失败: " + pop3.get_last_response();
+        }
+        int count = 0;
+        int total_size = 0;
+        if (!pop3.stat(&count, &total_size)) {
+            return "STAT 失败: " + pop3.get_last_response();
+        }
         std::string resp = pop3.get_last_response();
         pop3.quit();
         if (resp.empty()) return "未收到服务器响应";
-        return "成功: " + resp;
+        return "成功: " + resp + "，邮箱中共 " + std::to_string(count) + " 封邮件";
     });
 
     auto* watcher = new QFutureWatcher<std::string>(this);
     connect(watcher, &QFutureWatcher<std::string>::finished, [this, watcher]() {
         std::string result = watcher->result();
         test_pop3_btn_->setEnabled(true);
-        test_pop3_btn_->setText(QStringLiteral("🔍 测试接收 (POP3)"));
+        test_pop3_btn_->setText(QStringLiteral("测试接收 POP3"));
 
         if (result.find("成功") == 0) {
             QMessageBox::information(this, QStringLiteral("POP3 测试通过"),
