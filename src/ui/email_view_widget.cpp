@@ -1,4 +1,9 @@
 #include "email_view_widget.h"
+#include <QDir>
+#include <QFileDialog>
+#include <QFile>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QFrame>
 #include <QFont>
@@ -62,25 +67,25 @@ void EmailViewWidget::show_email(const Email& email) {
 
     QString html;
     html += "<table style='width:100%; border-collapse:collapse;'>";
-    html += "<tr><td colspan='2' style='font-size:22px; font-weight:700; color:#111827; padding-bottom:18px;'>"
+    html += "<tr><td colspan='2' style='font-size:22px; font-weight:700; color:#111827; padding-bottom:18px; line-height:1.4;'>"
             + esc(email.subject.empty() ? "(无主题)" : email.subject) + "</td></tr>";
 
     // 发件人
     QString from = email.sender_name.empty()
         ? QString::fromStdString(email.sender_addr)
         : QString::fromStdString(email.sender_name + " <" + email.sender_addr + ">");
-    html += QStringLiteral("<tr><td style='width:64px; color:#6B7280; padding:5px 0;'>发件人</td>"
-                           "<td style='color:#111827;'>%1</td></tr>").arg(from.toHtmlEscaped());
+    html += QStringLiteral("<tr><td style='width:56px; color:#6B7280; padding:4px 0; vertical-align:top; white-space:nowrap;'>发件人</td>"
+                           "<td style='color:#111827; padding:4px 0; vertical-align:top;'>%1</td></tr>").arg(from.toHtmlEscaped());
 
-    html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>收件人</td>"
-                           "<td style='color:#111827;'>%1</td></tr>").arg(esc(Email::join_recipients(email.to)));
+    html += QStringLiteral("<tr><td style='width:56px; color:#6B7280; padding:4px 0; vertical-align:top; white-space:nowrap;'>收件人</td>"
+                           "<td style='color:#111827; padding:4px 0; vertical-align:top;'>%1</td></tr>").arg(esc(Email::join_recipients(email.to)));
 
     if (!email.cc.empty())
-        html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>抄送</td>"
-                               "<td style='color:#111827;'>%1</td></tr>").arg(esc(Email::join_recipients(email.cc)));
+        html += QStringLiteral("<tr><td style='width:56px; color:#6B7280; padding:4px 0; vertical-align:top; white-space:nowrap;'>抄送</td>"
+                               "<td style='color:#111827; padding:4px 0; vertical-align:top;'>%1</td></tr>").arg(esc(Email::join_recipients(email.cc)));
 
-    html += QStringLiteral("<tr><td style='color:#6B7280; padding:5px 0;'>时间</td>"
-                           "<td style='color:#6B7280;'>%1</td></tr>").arg(esc(email.received_date));
+    html += QStringLiteral("<tr><td style='width:56px; color:#6B7280; padding:4px 0; vertical-align:top; white-space:nowrap;'>时间</td>"
+                           "<td style='color:#6B7280; padding:4px 0; vertical-align:top;'>%1</td></tr>").arg(esc(email.received_date));
     html += "</table>";
     header_label_->setText(html);
 
@@ -111,25 +116,64 @@ void EmailViewWidget::show_email(const Email& email) {
             QHBoxLayout* cl = new QHBoxLayout(card); cl->setContentsMargins(0,0,0,0);
 
             QString ext = QString::fromStdString(att.file_name).section('.', -1).toLower();
-            QString icon = QStringLiteral("FILE");
-            if (ext == "pdf") icon = QStringLiteral("PDF");
-            else if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif") icon = QStringLiteral("IMG");
-            else if (ext == "zip" || ext == "rar") icon = QStringLiteral("ZIP");
-            else if (ext == "doc" || ext == "docx") icon = QStringLiteral("DOC");
+            QString icon = QStringLiteral("📎");
+            if (ext == "pdf") icon = QStringLiteral("📕");
+            else if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif" || ext == "bmp" || ext == "webp") icon = QStringLiteral("🖼️");
+            else if (ext == "zip" || ext == "rar" || ext == "7z" || ext == "tar" || ext == "gz") icon = QStringLiteral("📦");
+            else if (ext == "doc" || ext == "docx") icon = QStringLiteral("📝");
+            else if (ext == "xls" || ext == "xlsx") icon = QStringLiteral("📊");
+            else if (ext == "ppt" || ext == "pptx") icon = QStringLiteral("📽️");
+            else if (ext == "mp3" || ext == "wav" || ext == "flac") icon = QStringLiteral("🎵");
+            else if (ext == "mp4" || ext == "avi" || ext == "mov") icon = QStringLiteral("🎬");
 
             QLabel* ico = new QLabel(icon, card); ico->setStyleSheet("font-size:20px; border:none; background:transparent;");
-            ico->setFixedWidth(44);
+            ico->setFixedWidth(36);
             cl->addWidget(ico);
             QLabel* nm = new QLabel(QString::fromStdString(att.file_name), card);
             nm->setStyleSheet("font-weight:500; color:#333; border:none; background:transparent;");
-            cl->addWidget(nm); cl->addStretch();
+            nm->setWordWrap(false);
+            cl->addWidget(nm, 1);
 
-            QString size = att.file_size > 1048576
-                ? QString::number(att.file_size / 1048576.0, 'f', 1) + " MB"
-                : QString::number(att.file_size / 1024.0, 'f', 0) + " KB";
+            QString size;
+            if (att.file_size > 0) {
+                size = att.file_size > 1048576
+                    ? QString::number(att.file_size / 1048576.0, 'f', 1) + " MB"
+                    : QString::number(att.file_size / 1024.0, 'f', 0) + " KB";
+            }
             QLabel* sz = new QLabel(size, card);
             sz->setStyleSheet("color:#999; font-size:12px; border:none; background:transparent;");
             cl->addWidget(sz);
+
+            // 下载按钮
+            QPushButton* dl = new QPushButton(QStringLiteral("下载"), card);
+            dl->setStyleSheet(
+                "QPushButton { background: #E8F0FE; color: #1A73E8; border: none;"
+                "border-radius: 4px; padding: 6px 14px; font-size: 12px; font-weight: 500; }"
+                "QPushButton:hover { background: #D2E3FC; }");
+            dl->setCursor(Qt::PointingHandCursor);
+            QString src_path = QString::fromStdString(att.file_path);
+            QString file_name = QString::fromStdString(att.file_name);
+            connect(dl, &QPushButton::clicked, this, [src_path, file_name]() {
+                QString default_path = QDir::homePath() + "/" + file_name;
+                QString save_path = QFileDialog::getSaveFileName(
+                    nullptr, QStringLiteral("保存附件"), default_path);
+                if (save_path.isEmpty()) return;
+                if (QFile::exists(save_path)) QFile::remove(save_path);
+                if (!QFile::copy(src_path, save_path)) {
+                    QMessageBox::warning(nullptr, QStringLiteral("下载失败"),
+                        QStringLiteral("无法保存文件到：\n%1").arg(save_path));
+                }
+            });
+            // 收信时未保存附件（旧数据 file_path 为空），按钮禁用
+            if (src_path.isEmpty() || !QFile::exists(src_path)) {
+                dl->setEnabled(false);
+                dl->setStyleSheet(
+                    "QPushButton { background: #F3F4F6; color: #9CA3AF; border: none;"
+                    "border-radius: 4px; padding: 6px 14px; font-size: 12px; }");
+                dl->setText(QStringLiteral("不可用"));
+            }
+            cl->addWidget(dl);
+
             al->addWidget(card);
         }
     }

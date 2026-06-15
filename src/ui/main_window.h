@@ -37,6 +37,11 @@ private slots:
     void on_email_selected(int email_id);
     void on_send_draft(int draft_id, const Email& updated);
     void on_refresh();
+    void on_toggle_multi_select();
+    void on_batch_delete();
+    void on_batch_restore();
+    void on_selection_changed();
+    void on_load_more();
 
 private:
     void setup_ui();
@@ -45,6 +50,7 @@ private:
     void load_accounts();
     void load_emails(const std::string& folder);
     void update_folder_counts();
+    void update_batch_buttons();
     void show_email_list_page();
 
     DbManager* db_mgr_;
@@ -58,6 +64,14 @@ private:
     QPushButton* btn_delete_;
     QPushButton* btn_restore_;
     QPushButton* btn_refresh_;
+    QPushButton* btn_multi_select_;
+
+    // Batch action bar
+    QWidget* batch_bar_;
+    QLabel* batch_count_label_;
+    QPushButton* btn_batch_delete_;
+    QPushButton* btn_batch_restore_;
+    QPushButton* btn_batch_cancel_;
 
     // Folder tree
     QTreeWidget* folder_tree_;
@@ -81,6 +95,11 @@ private:
     std::vector<Account> accounts_;
     int current_account_id_;
     std::string current_folder_;
+
+    // 分页加载
+    static constexpr int kPageSize = 50;
+    int current_offset_ = 0;
+    int total_count_ = 0;
 };
 
 #endif // MAIN_WINDOW_H

@@ -5,6 +5,7 @@
 #include "../core/email.h"
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 class DbManager {
 public:
@@ -29,8 +30,13 @@ public:
     bool delete_permanently(int email_id);   // 彻底从数据库删除
     bool mark_flagged(int email_id, bool flagged);
     bool move_to_folder(int email_id, const std::string& folder);
-    std::vector<Email> get_emails(int account_id, const std::string& folder);
-    std::vector<Email> get_deleted_emails(int account_id);  // 废纸篓
+    // offset < 0 表示加载全部（兼容旧调用）
+    std::vector<Email> get_emails(int account_id, const std::string& folder,
+                                  int limit = 50, int offset = 0);
+    std::vector<Email> get_deleted_emails(int account_id,
+                                          int limit = 50, int offset = 0);
+    int  get_email_count(int account_id, const std::string& folder);
+    int  get_deleted_count(int account_id);
     Email get_email(int email_id);
     int  get_unread_count(int account_id, const std::string& folder);
     int  get_total_count(int account_id, const std::string& folder);
@@ -39,6 +45,9 @@ public:
     int  add_attachment(int email_id, const Attachment& att);
     bool update_attachment_path(int attachment_id, const std::string& path);
     std::vector<Attachment> get_attachments(int email_id);
+    // 批量查询附件，返回 email_id -> attachments 映射表
+    std::unordered_map<int, std::vector<Attachment>> get_attachments_batch(
+        const std::vector<int>& email_ids);
 
     // ========== Sync State ==========
     bool is_uid_downloaded(int account_id, const std::string& uid);

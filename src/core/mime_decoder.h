@@ -8,18 +8,24 @@
 
 class MimeDecoder {
 public:
-    // Parse a raw email string into an Email object
-    Email decode(const std::string& raw_email, int account_id) const;
+    // Parse a raw email string into an Email object.
+    // If save_attachments_dir is non-empty, attachment bodies are saved as files
+    // under that directory and Attachment::file_path / file_size are populated.
+    Email decode(const std::string& raw_email, int account_id,
+                 const std::string& save_attachments_dir = "") const;
 
 private:
     // Parse headers from the header section
     void parse_headers(const std::string& header_text, Email& email) const;
 
     // Parse the body according to Content-Type
-    void parse_body(const std::string& body_text, Email& email, const std::string& content_type = "") const;
+    void parse_body(const std::string& body_text, Email& email,
+                    const std::string& content_type = "",
+                    const std::string& save_dir = "") const;
 
     // Parse a multipart body
-    void parse_multipart(const std::string& body, const std::string& boundary, Email& email) const;
+    void parse_multipart(const std::string& body, const std::string& boundary,
+                         Email& email, const std::string& save_dir = "") const;
 
     // Decode RFC 2047 encoded words: =?charset?encoding?text?=
     std::string decode_rfc2047(const std::string& encoded) const;

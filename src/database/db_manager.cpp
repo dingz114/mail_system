@@ -1,4 +1,5 @@
 #include "db_manager.h"
+#include <cstdio>
 #include <sstream>
 #include <iostream>
 #include <cstring>
@@ -26,6 +27,66 @@ static std::string sql_bool(bool b) {
 
 static std::string sql_quote(DbConnection* conn, const std::string& s) {
     return "'" + conn->escape_string(s) + "'";
+}
+
+// 过滤 4 字节 UTF-8 字符（emoji 等），防止 utf8 列写入失败
+// MySQL utf8 只支持 3 字节，utf8mb4 支持 4 字节
+static bool is_utf8_continuation(unsigned char b) {
+    return (b & 0xC0) == 0x80;  // 10xxxxxx
+}
+
+static std::string safe_utf8(const std::string& s) {
+    std::string result;
+    result.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len = 1;
+        if ((c & 0x80) == 0)        len = 1;     // 0xxxxxxx
+        else if ((c & 0xE0) == 0xC0) len = 2;    // 110xxxxx
+        else if ((c & 0xF0) == 0xE0) len = 3;    // 1110xxxx
+        else if ((c & 0xF8) == 0xF0) len = 4;    // 11110xxx (4-byte, unsupported by utf8)
+        else { result += '?'; ++i; continue; }    // invalid lead byte
+
+        // 边界检查：确保不越界读
+        if (i + len > s.size()) {
+            result += '?';
+            ++i;
+            continue;
+        }
+
+        // 验证续字节格式 (10xxxxxx)
+        bool valid = true;
+        for (size_t j = 1; j < len; ++j) {
+            if (!is_utf8_continuation(static_cast<unsigned char>(s[i + j]))) {
+                valid = false;
+                break;
+            }
+        }
+
+        if (len == 4) {
+            if (valid) {
+                result += "&#x";
+                char hex[8];
+                uint32_t cp = ((c & 0x07) << 18) |
+                              ((static_cast<unsigned char>(s[i+1]) & 0x3F) << 12) |
+                              ((static_cast<unsigned char>(s[i+2]) & 0x3F) << 6) |
+                               (static_cast<unsigned char>(s[i+3]) & 0x3F);
+                snprintf(hex, sizeof(hex), "%X;", cp);
+                result += hex;
+            } else {
+                result += '?';
+            }
+            i += 4;
+        } else {
+            if (valid) {
+                result.append(s, i, len);
+            } else {
+                result += '?';
+            }
+            i += len;
+        }
+    }
+    return result;
 }
 
 // ========== Accounts CRUD ==========
@@ -154,14 +215,14 @@ int DbManager::save_email(const Email& email) {
         << sql_quote(conn_, email.folder) << ", "
         << sql_quote(conn_, email.message_id) << ", "
         << sql_quote(conn_, email.pop3_uid) << ", "
-        << sql_quote(conn_, email.sender_name) << ", "
-        << sql_quote(conn_, email.sender_addr) << ", "
-        << sql_quote(conn_, Email::join_recipients(email.to)) << ", "
-        << sql_quote(conn_, Email::join_recipients(email.cc)) << ", "
-        << sql_quote(conn_, Email::join_recipients(email.bcc)) << ", "
-        << sql_quote(conn_, email.subject) << ", "
-        << sql_quote(conn_, email.body_plain) << ", "
-        << sql_quote(conn_, email.body_html) << ", "
+        << sql_quote(conn_, safe_utf8(email.sender_name)) << ", "
+        << sql_quote(conn_, safe_utf8(email.sender_addr)) << ", "
+        << sql_quote(conn_, safe_utf8(Email::join_recipients(email.to))) << ", "
+        << sql_quote(conn_, safe_utf8(Email::join_recipients(email.cc))) << ", "
+        << sql_quote(conn_, safe_utf8(Email::join_recipients(email.bcc))) << ", "
+        << sql_quote(conn_, safe_utf8(email.subject)) << ", "
+        << sql_quote(conn_, safe_utf8(email.body_plain)) << ", "
+        << sql_quote(conn_, safe_utf8(email.body_html)) << ", "
         << sql_bool(email.is_read) << ", "
         << sql_bool(email.is_deleted) << ", "
         << sql_bool(email.is_flagged) << ", "
@@ -226,48 +287,75 @@ bool DbManager::move_to_folder(int email_id, const std::string& folder) {
     return conn_->query(sql);
 }
 
-std::vector<Email> DbManager::get_emails(int account_id, const std::string& folder) {
+std::vector<Email> DbManager::get_emails(int account_id, const std::string& folder,
+                                         int limit, int offset) {
     std::vector<Email> emails;
     std::ostringstream sql;
     sql << "SELECT * FROM emails WHERE account_id=" << sql_int(account_id)
         << " AND folder=" << sql_quote(conn_, folder)
-        << " AND is_deleted=0 ORDER BY received_date DESC";
+        << " AND is_deleted=0 ORDER BY received_date DESC"
+        << " LIMIT " << limit << " OFFSET " << offset;
 
     if (!conn_->query(sql.str())) return emails;
 
     MYSQL_RES* result = conn_->store_result();
     if (!result) return emails;
 
+    // 先收集所有 email_id，用于批量查附件
+    std::vector<int> email_ids;
+    std::vector<Email> temp;
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(result))) {
         Email email = row_to_email(row);
-        // Load attachments for this email
-        email.attachments = get_attachments(email.id);
+        email_ids.push_back(email.id);
+        temp.push_back(email);
+    }
+    mysql_free_result(result);
+
+    // 批量加载附件（1 次 SQL 替代 N 次）
+    auto att_map = get_attachments_batch(email_ids);
+    for (auto& email : temp) {
+        auto it = att_map.find(email.id);
+        if (it != att_map.end()) {
+            email.attachments = it->second;
+        }
         email.has_attachments = !email.attachments.empty();
         emails.push_back(email);
     }
-    mysql_free_result(result);
     return emails;
 }
 
-std::vector<Email> DbManager::get_deleted_emails(int account_id) {
+std::vector<Email> DbManager::get_deleted_emails(int account_id,
+                                                int limit, int offset) {
     std::vector<Email> emails;
     std::ostringstream sql;
     sql << "SELECT * FROM emails WHERE account_id=" << sql_int(account_id)
-        << " AND is_deleted=1 ORDER BY updated_at DESC";
+        << " AND is_deleted=1 ORDER BY updated_at DESC"
+        << " LIMIT " << limit << " OFFSET " << offset;
 
     if (!conn_->query(sql.str())) return emails;
     MYSQL_RES* result = conn_->store_result();
     if (!result) return emails;
 
+    std::vector<int> email_ids;
+    std::vector<Email> temp;
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(result))) {
         Email email = row_to_email(row);
-        email.attachments = get_attachments(email.id);
+        email_ids.push_back(email.id);
+        temp.push_back(email);
+    }
+    mysql_free_result(result);
+
+    auto att_map = get_attachments_batch(email_ids);
+    for (auto& email : temp) {
+        auto it = att_map.find(email.id);
+        if (it != att_map.end()) {
+            email.attachments = it->second;
+        }
         email.has_attachments = !email.attachments.empty();
         emails.push_back(email);
     }
-    mysql_free_result(result);
     return emails;
 }
 
@@ -318,6 +406,35 @@ int DbManager::get_total_count(int account_id, const std::string& folder) {
     MYSQL_RES* result = conn_->store_result();
     if (!result) return 0;
 
+    MYSQL_ROW row = mysql_fetch_row(result);
+    int count = (row && row[0]) ? std::stoi(row[0]) : 0;
+    mysql_free_result(result);
+    return count;
+}
+
+int DbManager::get_email_count(int account_id, const std::string& folder) {
+    std::ostringstream sql;
+    sql << "SELECT COUNT(*) FROM emails WHERE account_id=" << sql_int(account_id)
+        << " AND folder=" << sql_quote(conn_, folder)
+        << " AND is_deleted=0";
+
+    if (!conn_->query(sql.str())) return 0;
+    MYSQL_RES* result = conn_->store_result();
+    if (!result) return 0;
+    MYSQL_ROW row = mysql_fetch_row(result);
+    int count = (row && row[0]) ? std::stoi(row[0]) : 0;
+    mysql_free_result(result);
+    return count;
+}
+
+int DbManager::get_deleted_count(int account_id) {
+    std::ostringstream sql;
+    sql << "SELECT COUNT(*) FROM emails WHERE account_id=" << sql_int(account_id)
+        << " AND is_deleted=1";
+
+    if (!conn_->query(sql.str())) return 0;
+    MYSQL_RES* result = conn_->store_result();
+    if (!result) return 0;
     MYSQL_ROW row = mysql_fetch_row(result);
     int count = (row && row[0]) ? std::stoi(row[0]) : 0;
     mysql_free_result(result);
@@ -387,6 +504,34 @@ std::vector<Attachment> DbManager::get_attachments(int email_id) {
     }
     mysql_free_result(result);
     return attachments;
+}
+
+std::unordered_map<int, std::vector<Attachment>>
+DbManager::get_attachments_batch(const std::vector<int>& email_ids) {
+    std::unordered_map<int, std::vector<Attachment>> result;
+    if (email_ids.empty()) return result;
+
+    std::ostringstream sql;
+    sql << "SELECT * FROM attachments WHERE email_id IN (";
+    for (size_t i = 0; i < email_ids.size(); ++i) {
+        if (i > 0) sql << ", ";
+        sql << email_ids[i];
+    }
+    sql << ")";
+
+    if (!conn_->query(sql.str())) return result;
+    MYSQL_RES* mysql_result = conn_->store_result();
+    if (!mysql_result) return result;
+
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(mysql_result))) {
+        Attachment att = row_to_attachment(row);
+        // email_id 是 row 的第 2 列（index 1）
+        int email_id = row[1] ? std::stoi(row[1]) : 0;
+        result[email_id].push_back(att);
+    }
+    mysql_free_result(mysql_result);
+    return result;
 }
 
 Attachment DbManager::row_to_attachment(char** row) {
