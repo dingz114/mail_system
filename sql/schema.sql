@@ -32,15 +32,15 @@ CREATE TABLE IF NOT EXISTS emails (
     message_id      VARCHAR(512),
     pop3_uid        VARCHAR(255),
     -- Headers
-    sender_name     VARCHAR(255),
-    sender_addr     VARCHAR(255) NOT NULL,
-    recipients_to   TEXT NOT NULL,
-    recipients_cc   TEXT,
-    recipients_bcc  TEXT,
-    subject         VARCHAR(998),
+    sender_name     VARCHAR(255) CHARACTER SET utf8mb4,
+    sender_addr     VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+    recipients_to   TEXT CHARACTER SET utf8mb4 NOT NULL,
+    recipients_cc   TEXT CHARACTER SET utf8mb4,
+    recipients_bcc  TEXT CHARACTER SET utf8mb4,
+    subject         VARCHAR(998) CHARACTER SET utf8mb4,
     -- Body
-    body_plain      LONGTEXT,
-    body_html       LONGTEXT,
+    body_plain      LONGTEXT CHARACTER SET utf8mb4,
+    body_html       LONGTEXT CHARACTER SET utf8mb4,
     -- Flags
     is_read         TINYINT(1) NOT NULL DEFAULT 0,
     is_deleted      TINYINT(1) NOT NULL DEFAULT 0,
@@ -89,3 +89,17 @@ CREATE TABLE IF NOT EXISTS sync_state (
     FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE,
     UNIQUE KEY uk_account_pop3uid (account_id, pop3_uid)
 ) ENGINE=InnoDB;
+
+-- ============================================================
+-- 升级迁移：将已有表的文本列改为 utf8mb4（支持 emoji 等 4 字节字符）
+-- 如果建表时未指定 CHARACTER SET，运行以下语句修复：
+-- ============================================================
+-- ALTER TABLE emails
+--   MODIFY sender_name     VARCHAR(255) CHARACTER SET utf8mb4,
+--   MODIFY sender_addr     VARCHAR(255) CHARACTER SET utf8mb4 NOT NULL,
+--   MODIFY recipients_to   TEXT         CHARACTER SET utf8mb4 NOT NULL,
+--   MODIFY recipients_cc   TEXT         CHARACTER SET utf8mb4,
+--   MODIFY recipients_bcc  TEXT         CHARACTER SET utf8mb4,
+--   MODIFY subject         VARCHAR(998) CHARACTER SET utf8mb4,
+--   MODIFY body_plain      LONGTEXT     CHARACTER SET utf8mb4,
+--   MODIFY body_html       LONGTEXT     CHARACTER SET utf8mb4;
