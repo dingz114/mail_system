@@ -2,15 +2,56 @@
 #include "base64.h"
 #include <sstream>
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
+
+// 临时调试：CMake 中加 -DDEBUG_EMAIL_CONTENT 或在文件开头取消注释来启用
+// #define DEBUG_EMAIL_CONTENT
+
+#ifdef DEBUG_EMAIL_CONTENT
+#define DEBUG_LOG(x) std::cerr << x
+#else
+#define DEBUG_LOG(x) ((void)0)
+#endif
 
 #ifdef _WIN32
     #include <windows.h>
 #endif
 
 namespace {
+
+// 将附件内容写入文件，返回文件路径，失败返回空字符串
+std::string save_attachment_file(const std::string& save_dir,
+                                  const std::string& filename,
+                                  const std::string& data) {
+    if (save_dir.empty() || data.empty()) return "";
+
+    // 生成唯一文件名：时间戳_序号_原始文件名
+    static int seq = 0;
+    char buf[64];
+    auto now = std::time(nullptr);
+    std::strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", std::localtime(&now));
+    std::string safe_name = std::string(buf) + "_" + std::to_string(++seq) + "_" + filename;
+
+    // 确保文件名安全：替换路径分隔符
+    for (auto& ch : safe_name) {
+        if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+    }
+
+    std::string full_path = save_dir;
+    if (!full_path.empty() && full_path.back() != '/' && full_path.back() != '\\')
+        full_path += '/';
+    full_path += safe_name;
+
+    std::ofstream out(full_path, std::ios::binary);
+    if (!out) return "";
+    out.write(data.data(), data.size());
+    out.close();
+    return full_path;
+}
 
 std::string trim_copy(const std::string& value) {
     size_t start = value.find_first_not_of(" \t\r\n");
@@ -127,7 +168,8 @@ std::string clean_pop3_payload(const std::string& raw) {
 
 } // namespace
 
-Email MimeDecoder::decode(const std::string& raw_email, int account_id) const {
+Email MimeDecoder::decode(const std::string& raw_email, int account_id,
+                         const std::string& save_attachments_dir) const {
     Email email;
     email.account_id = account_id;
     email.folder = "inbox";
@@ -135,6 +177,9 @@ Email MimeDecoder::decode(const std::string& raw_email, int account_id) const {
     if (raw_email.empty()) return email;
 
     const std::string message = clean_pop3_payload(raw_email);
+    DEBUG_LOG("[MimeDecoder] cleaned message size=" << message.size()
+              << "\n=== FULL MESSAGE ===\n" << message << "\n=== END ===\n");
+
     std::string header_text;
     std::string body_text;
     if (!split_header_body(message, header_text, body_text)) {
@@ -152,10 +197,17 @@ Email MimeDecoder::decode(const std::string& raw_email, int account_id) const {
                            : "text/plain; charset=\"utf-8\"",
                        media_type, params);
 
+    DEBUG_LOG("[MimeDecoder] top-level Content-Type: " << media_type
+              << " has_boundary=" << (params.count("boundary") ? "yes" : "no")
+              << " body_size=" << body_text.size()
+              << " has_attach=" << email.has_attachments
+              << " attach_count=" << email.attachments.size() << std::endl);
+
     if (media_type.find("multipart/") == 0 && params.count("boundary")) {
-        parse_multipart(body_text, params["boundary"], email);
+        DEBUG_LOG("[MimeDecoder] boundary=" << params["boundary"] << std::endl);
+        parse_multipart(body_text, params["boundary"], email, save_attachments_dir);
     } else {
-        parse_body(body_text, email, header_text);
+        parse_body(body_text, email, header_text, save_attachments_dir);
     }
 
     return email;
@@ -250,7 +302,9 @@ void MimeDecoder::parse_headers(const std::string& header_text, Email& email) co
     }
 }
 
-void MimeDecoder::parse_body(const std::string& body_text, Email& email, const std::string& body_header_hint) const {
+void MimeDecoder::parse_body(const std::string& body_text, Email& email,
+                            const std::string& body_header_hint,
+                            const std::string& save_dir) const {
     std::map<std::string, std::string> params;
     std::string media_type = "text/plain";
 
@@ -289,10 +343,13 @@ void MimeDecoder::parse_body(const std::string& body_text, Email& email, const s
     }
 }
 
-void MimeDecoder::parse_multipart(const std::string& body, const std::string& boundary, Email& email) const {
+void MimeDecoder::parse_multipart(const std::string& body, const std::string& boundary,
+                                 Email& email, const std::string& save_dir) const {
     // Split body by boundary
     std::string delimiter = "--" + boundary;
     size_t pos = 0;
+    DEBUG_LOG("[MimeDecoder] parse_multipart boundary=" << boundary
+              << " body_size=" << body.size() << std::endl);
 
     while (true) {
         size_t next = body.find(delimiter, pos);
@@ -394,10 +451,24 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
 
         bool is_attachment = (lower_disposition.find("attachment") != std::string::npos);
 
+        if (is_attachment || media_type.find("image/") == 0 ||
+            media_type.find("application/") == 0 ||
+            media_type.find("audio/") == 0 || media_type.find("video/") == 0) {
+            DEBUG_LOG("[MimeDecoder] part: media_type=" << media_type
+                      << " disposition=" << content_disposition
+                      << " transfer_enc=" << transfer_encoding
+                      << " is_attachment=" << is_attachment
+                      << " filename=" << attachment_filename
+                      << " raw_body_size=" << part_body.size()
+                      << " decoded_size=" << decoded_body.size()
+                      << " first50=" << part_body.substr(0, 50) << std::endl);
+        }
+
         if (is_attachment) {
             Attachment att;
             att.file_name = attachment_filename;
-            att.file_path = "";
+            att.file_path = save_attachment_file(save_dir, attachment_filename, decoded_body);
+            att.file_size = decoded_body.size();
             att.mime_type = media_type;
             att.content_id = content_id;
             email.attachments.push_back(att);
@@ -410,12 +481,14 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
             email.body_html = decoded_body;
         } else if (media_type.find("multipart/") == 0 && params.count("boundary")) {
             // Nested multipart
-            parse_multipart(part_body, params["boundary"], email);
+            parse_multipart(part_body, params["boundary"], email, save_dir);
         } else if (media_type.find("image/") == 0 || media_type.find("application/") == 0 ||
                    media_type.find("audio/") == 0 || media_type.find("video/") == 0) {
-            // Inline media or unrecognized — treat as attachment
+            // Inline media — save and treat as attachment
             Attachment att;
             att.file_name = attachment_filename.empty() ? "attachment" : attachment_filename;
+            att.file_path = save_attachment_file(save_dir, att.file_name, decoded_body);
+            att.file_size = decoded_body.size();
             att.mime_type = media_type;
             att.content_id = content_id;
             email.attachments.push_back(att);

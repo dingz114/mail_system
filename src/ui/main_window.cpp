@@ -21,8 +21,10 @@
 #include <QFutureWatcher>
 #include <QThread>
 #include <QScreen>
+#include <QDir>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
+#include <QStandardPaths>
 #include <QStyle>
 
 MainWindow::MainWindow(DbManager* db_mgr, QWidget* parent)
@@ -109,10 +111,11 @@ void MainWindow::setup_ui() {
     account_panel->setStyleSheet(
         "QWidget#accountBottom { border-top: 1px solid rgba(255, 255, 255, 0.13); }"
         "QLabel { color: #AFC1D4; }"
-        "QComboBox { background: rgba(255, 255, 255, 0.10); color: #FFFFFF; "
+        "QComboBox { background: rgba(255, 255, 255, 0.10); color: #FFFFFF; font-size: 12px;"
         "border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 6px; padding: 7px 28px 7px 10px; }"
         "QComboBox:hover { border-color: rgba(255, 255, 255, 0.32); }"
-        "QComboBox::drop-down { border: none; width: 24px; }");
+        "QComboBox::drop-down { border: none; width: 24px; }"
+        "QComboBox QAbstractItemView { font-size: 12px; }");
 
     QVBoxLayout* account_layout = new QVBoxLayout(account_panel);
     account_layout->setContentsMargins(18, 15, 18, 17);
@@ -148,6 +151,38 @@ void MainWindow::setup_ui() {
     auto* list_layout = new QVBoxLayout(list_page_);
     list_layout->setContentsMargins(0, 0, 0, 0);
     list_layout->setSpacing(0);
+
+    // 批量操作栏（默认隐藏）
+    batch_bar_ = new QWidget(list_page_);
+    batch_bar_->setObjectName("batchBar");
+    batch_bar_->setFixedHeight(52);
+    batch_bar_->setStyleSheet(
+        "QWidget#batchBar { background: #EFF6FF; border-bottom: 1px solid #BFDBFE; }");
+    batch_bar_->setVisible(false);
+    auto* batch_layout = new QHBoxLayout(batch_bar_);
+    batch_layout->setContentsMargins(20, 0, 12, 0);
+    batch_layout->setSpacing(10);
+
+    batch_count_label_ = new QLabel(QStringLiteral("已选择 0 封邮件"), batch_bar_);
+    batch_count_label_->setStyleSheet("color: #1677FF; font-weight: 600; font-size: 13px;");
+    batch_layout->addWidget(batch_count_label_);
+    batch_layout->addStretch();
+
+    btn_batch_restore_ = new QPushButton(QStringLiteral("批量恢复"), batch_bar_);
+    UiStyle::applyPrimaryButton(btn_batch_restore_, 88);
+    btn_batch_restore_->setVisible(false);
+    batch_layout->addWidget(btn_batch_restore_);
+
+    btn_batch_delete_ = new QPushButton(QStringLiteral("批量删除"), batch_bar_);
+    UiStyle::applyDangerButton(btn_batch_delete_, 88);
+    batch_layout->addWidget(btn_batch_delete_);
+
+    btn_batch_cancel_ = new QPushButton(QStringLiteral("取消"), batch_bar_);
+    UiStyle::applyGhostButton(btn_batch_cancel_, 64);
+    batch_layout->addWidget(btn_batch_cancel_);
+
+    list_layout->addWidget(batch_bar_);
+
     email_list_ = new EmailListWidget(list_page_);
     list_layout->addWidget(email_list_);
 
@@ -183,7 +218,14 @@ void MainWindow::setup_ui() {
     connect(account_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::on_account_changed);
     connect(email_list_, &EmailListWidget::email_selected, this, &MainWindow::on_email_selected);
+    connect(email_list_, &EmailListWidget::load_more_requested, this, &MainWindow::on_load_more);
     connect(btn_back_to_list_, &QPushButton::clicked, this, &MainWindow::show_email_list_page);
+
+    // 批量操作栏
+    connect(btn_batch_delete_, &QPushButton::clicked, this, &MainWindow::on_batch_delete);
+    connect(btn_batch_restore_, &QPushButton::clicked, this, &MainWindow::on_batch_restore);
+    connect(btn_batch_cancel_, &QPushButton::clicked, this, &MainWindow::on_toggle_multi_select);
+    connect(email_list_, &EmailListWidget::selection_changed, this, &MainWindow::on_selection_changed);
 
     status_label_ = new QLabel(this);
     status_label_->setStyleSheet("color: #6B7280; font-size: 12px; padding: 2px 8px;");
@@ -229,7 +271,7 @@ void MainWindow::setup_toolbar() {
     connect(btn_delete_, &QPushButton::clicked, this, &MainWindow::on_delete_mail);
 
     btn_restore_ = new QPushButton(QStringLiteral("恢复"), this);
-    btn_restore_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    btn_restore_->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
     UiStyle::applyGhostButton(btn_restore_, 82);
     btn_restore_->setVisible(true);
     toolbar_->addWidget(btn_restore_);
@@ -240,6 +282,18 @@ void MainWindow::setup_toolbar() {
     UiStyle::applyGhostButton(btn_refresh_, 82);
     toolbar_->addWidget(btn_refresh_);
     connect(btn_refresh_, &QPushButton::clicked, this, &MainWindow::on_refresh);
+
+    // 分隔线
+    QWidget* sep = new QWidget(this);
+    sep->setFixedWidth(1);
+    sep->setFixedHeight(24);
+    sep->setStyleSheet("background: #E0E5EB;");
+    toolbar_->addWidget(sep);
+
+    btn_multi_select_ = new QPushButton(QStringLiteral("多选"), this);
+    UiStyle::applySecondaryButton(btn_multi_select_, 88);
+    toolbar_->addWidget(btn_multi_select_);
+    connect(btn_multi_select_, &QPushButton::clicked, this, &MainWindow::on_toggle_multi_select);
 }
 
 void MainWindow::setup_menu() {
@@ -332,6 +386,10 @@ void MainWindow::on_folder_changed() {
     else if (item == drafts_item_) current_folder_ = "drafts";
     else if (item == trash_item_) current_folder_ = "trash";
     load_emails(current_folder_);
+    if (email_list_->is_multi_select_mode()) {
+        update_batch_buttons();
+        on_selection_changed();  // 刷新计数
+    }
 }
 
 void MainWindow::show_email_list_page() {
@@ -342,14 +400,22 @@ void MainWindow::show_email_list_page() {
 
 void MainWindow::load_emails(const std::string& folder) {
     show_email_list_page();
-    if (current_account_id_ < 0) { email_list_->clear(); email_view_->clear(); return; }
-    // 废纸篓特殊处理：显示所有 is_deleted=1 的邮件
+    current_offset_ = 0;  // 重置分页
+    if (current_account_id_ < 0) {
+        email_list_->clear(); email_view_->clear();
+        total_count_ = 0;
+        return;
+    }
+
     std::vector<Email> emails;
     if (folder == "trash") {
-        emails = db_mgr_->get_deleted_emails(current_account_id_);
+        emails = db_mgr_->get_deleted_emails(current_account_id_, kPageSize, 0);
+        total_count_ = db_mgr_->get_deleted_count(current_account_id_);
     } else {
-        emails = db_mgr_->get_emails(current_account_id_, folder);
+        emails = db_mgr_->get_emails(current_account_id_, folder, kPageSize, 0);
+        total_count_ = db_mgr_->get_email_count(current_account_id_, folder);
     }
+    current_offset_ = static_cast<int>(emails.size());
     email_list_->set_emails(emails);
     email_view_->clear();
 
@@ -358,7 +424,7 @@ void MainWindow::load_emails(const std::string& folder) {
     else if (folder == "sent") name = QStringLiteral("已发送");
     else if (folder == "drafts") name = QStringLiteral("草稿箱");
     else name = QStringLiteral("废纸篓");
-    status_label_->setText(QStringLiteral("%1 — %2 封邮件").arg(name).arg(emails.size()));
+    status_label_->setText(QStringLiteral("%1 — %2 封邮件").arg(name).arg(total_count_));
 }
 
 void MainWindow::update_folder_counts() {
@@ -388,7 +454,7 @@ void MainWindow::on_email_selected(int email_id) {
     if (mail_stack_ && detail_page_) {
         mail_stack_->setCurrentWidget(detail_page_);
     }
-    if (!email.is_read) { db_mgr_->mark_read(email_id); update_folder_counts(); }
+    if (!email.is_read) { db_mgr_->mark_read(email_id); email_list_->mark_email_read(email_id); update_folder_counts(); }
 }
 
 void MainWindow::on_send_draft(int draft_id, const Email& updated) {
@@ -444,11 +510,13 @@ void MainWindow::on_receive() {
             MimeDecoder dec; int new_count = 0;
             int failed_count = 0;
             std::string first_save_error;
+            QString attach_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                                 + "/attachments";
             for (auto& email : emails) {
                 std::string uid = email.pop3_uid;
                 if (!uid.empty() && db_mgr_->is_uid_downloaded(acc.id, uid)) continue;
 
-                Email decoded = dec.decode(email.body_plain, acc.id);
+                Email decoded = dec.decode(email.body_plain, acc.id, attach_dir.toStdString());
                 decoded.pop3_uid = uid;
                 decoded.folder = "inbox";
                 if (decoded.received_date.empty()) {
@@ -460,6 +528,10 @@ void MainWindow::on_receive() {
 
                 int eid = db_mgr_->save_email(decoded);
                 if (eid > 0) {
+                    // 保存附件记录到数据库
+                    for (const auto& att : decoded.attachments) {
+                        db_mgr_->add_attachment(eid, att);
+                    }
                     if (!uid.empty()) db_mgr_->mark_uid_downloaded(acc.id, uid, eid);
                     new_count++;
                 } else {
@@ -612,4 +684,104 @@ void MainWindow::on_restore_mail() {
 void MainWindow::on_refresh() {
     load_emails(current_folder_); update_folder_counts();
     status_label_->setText(QStringLiteral("已刷新"));
+}
+
+void MainWindow::on_load_more() {
+    if (current_account_id_ < 0) return;
+    if (current_offset_ >= total_count_) return;  // 已全部加载
+
+    std::vector<Email> emails;
+    if (current_folder_ == "trash") {
+        emails = db_mgr_->get_deleted_emails(current_account_id_, kPageSize, current_offset_);
+    } else {
+        emails = db_mgr_->get_emails(current_account_id_, current_folder_, kPageSize, current_offset_);
+    }
+
+    if (!emails.empty()) {
+        current_offset_ += static_cast<int>(emails.size());
+        email_list_->append_emails(emails);
+    }
+}
+
+// ---------- 批量选中 ----------
+
+void MainWindow::on_toggle_multi_select() {
+    bool active = !email_list_->is_multi_select_mode();
+    email_list_->set_multi_select_mode(active);
+
+    if (active) {
+        btn_multi_select_->setText(QStringLiteral("完成"));
+        UiStyle::applyPrimaryButton(btn_multi_select_, 88);
+        batch_bar_->setVisible(true);
+        // 根据当前文件夹调整批量按钮显示
+        update_batch_buttons();
+        status_label_->setText(QStringLiteral("多选模式 — 点击邮件勾选，使用底部按钮批量操作"));
+    } else {
+        btn_multi_select_->setText(QStringLiteral("多选"));
+        UiStyle::applySecondaryButton(btn_multi_select_, 88);
+        batch_bar_->setVisible(false);
+        status_label_->setText(QStringLiteral("就绪"));
+    }
+}
+
+void MainWindow::update_batch_buttons() {
+    // 废纸篓：显示"批量恢复"；其他文件夹仅显示"批量删除"
+    bool is_trash = (current_folder_ == "trash");
+    btn_batch_restore_->setVisible(is_trash);
+    // 废纸篓中"批量删除"变成"彻底删除"
+    btn_batch_delete_->setText(is_trash ? QStringLiteral("彻底删除") : QStringLiteral("批量删除"));
+}
+
+void MainWindow::on_selection_changed() {
+    int count = email_list_->selected_count();
+    batch_count_label_->setText(QStringLiteral("已选择 %1 封邮件").arg(count));
+    bool has_selection = (count > 0);
+    btn_batch_delete_->setEnabled(has_selection);
+    btn_batch_restore_->setEnabled(has_selection);
+}
+
+void MainWindow::on_batch_delete() {
+    std::vector<int> ids = email_list_->selected_email_ids();
+    if (ids.empty()) {
+        status_label_->setText(QStringLiteral("请先勾选要删除的邮件"));
+        return;
+    }
+
+    if (current_folder_ == "trash") {
+        // 废纸篓：彻底删除
+        QString msg = QStringLiteral("确定要彻底删除选中的 %1 封邮件吗？\n此操作不可恢复！").arg(ids.size());
+        if (QMessageBox::question(this, QStringLiteral("彻底删除"), msg,
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
+            for (int id : ids) {
+                db_mgr_->delete_permanently(id);
+            }
+            status_label_->setText(QStringLiteral("已彻底删除 %1 封邮件").arg(ids.size()));
+        }
+    } else {
+        // 其他文件夹：移入废纸篓
+        QString msg = QStringLiteral("确定要删除选中的 %1 封邮件吗？\n（可在废纸篓中找回）").arg(ids.size());
+        if (QMessageBox::question(this, QStringLiteral("批量删除"), msg,
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) {
+            for (int id : ids) {
+                db_mgr_->mark_deleted(id);
+            }
+            status_label_->setText(QStringLiteral("已移入废纸篓 %1 封邮件").arg(ids.size()));
+        }
+    }
+    load_emails(current_folder_);
+    update_folder_counts();
+}
+
+void MainWindow::on_batch_restore() {
+    std::vector<int> ids = email_list_->selected_email_ids();
+    if (ids.empty()) {
+        status_label_->setText(QStringLiteral("请先勾选要恢复的邮件"));
+        return;
+    }
+    for (int id : ids) {
+        db_mgr_->mark_undeleted(id);
+    }
+    status_label_->setText(QStringLiteral("已恢复 %1 封邮件").arg(ids.size()));
+    load_emails(current_folder_);
+    update_folder_counts();
 }
