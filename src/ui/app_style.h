@@ -13,6 +13,7 @@ void applyPrimaryButton(QPushButton* button, int min_width = 88);
 void applySecondaryButton(QPushButton* button, int min_width = 88);
 void applyDangerButton(QPushButton* button, int min_width = 88);
 void applyGhostButton(QPushButton* button, int min_width = 88);
+void applyDangerGhostButton(QPushButton* button, int min_width = 88);
 
 } // namespace UiStyle
 

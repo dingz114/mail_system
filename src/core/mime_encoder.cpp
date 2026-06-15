@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <fstream>
 #include <ctime>
+#include <cstdlib>
 #include <random>
 
 #ifdef _WIN32
@@ -199,35 +200,32 @@ std::string MimeEncoder::generate_boundary() const {
 
 std::string MimeEncoder::format_date() const {
     auto now = std::time(nullptr);
-    std::tm tm_now;
+    std::tm tm_local;
+    std::tm tm_utc;
 #ifdef _WIN32
-    localtime_s(&tm_now, &now);
+    localtime_s(&tm_local, &now);
+    gmtime_s(&tm_utc, &now);
 #else
-    localtime_r(&now, &tm_now);
+    localtime_r(&now, &tm_local);
+    gmtime_r(&now, &tm_utc);
 #endif
 
     char buf[128];
     // RFC 2822 format: Thu, 15 Jun 2026 10:00:00 +0800
-    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S %z", &tm_now);
+    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S", &tm_local);
 
-    // If %z is empty (MSVC doesn't support it well), add timezone manually
+    std::tm tm_utc_as_local = tm_utc;
+    const long tz_offset_minutes = static_cast<long>(
+        std::difftime(std::mktime(&tm_local), std::mktime(&tm_utc_as_local)) / 60);
+
+    char tz_buf[8];
+    const char sign = tz_offset_minutes >= 0 ? '+' : '-';
+    const long abs_offset = std::labs(tz_offset_minutes);
+    std::snprintf(tz_buf, sizeof(tz_buf), " %c%02ld%02ld",
+                  sign, abs_offset / 60, abs_offset % 60);
+
     std::string date_str(buf);
-    if (date_str.find("+") == std::string::npos && date_str.find("-") == std::string::npos) {
-        // Estimate timezone offset
-        long tz_offset = 0;
-#ifdef _WIN32
-        TIME_ZONE_INFORMATION tzi;
-        GetTimeZoneInformation(&tzi);
-        tz_offset = -tzi.Bias;  // Bias is negative of UTC offset in minutes
-#else
-        tz_offset = tm_now.tm_gmtoff / 60;  // seconds to minutes
-#endif
-        char tz_buf[10];
-        int tz_hours = (int)(tz_offset / 60);
-        int tz_mins = abs((int)(tz_offset % 60));
-        snprintf(tz_buf, sizeof(tz_buf), " %+03d%02d", tz_hours, tz_mins);
-        date_str += tz_buf;
-    }
+    date_str += tz_buf;
 
     return date_str;
 }

@@ -3,8 +3,7 @@
 
 #include <QMainWindow>
 #include <QTreeWidget>
-#include <QTableWidget>
-#include <QSplitter>
+#include <QStackedWidget>
 #include <QToolBar>
 #include <QStatusBar>
 #include <QLabel>
@@ -46,6 +45,7 @@ private:
     void load_accounts();
     void load_emails(const std::string& folder);
     void update_folder_counts();
+    void show_email_list_page();
 
     DbManager* db_mgr_;
 
@@ -69,8 +69,10 @@ private:
     // Email list & view
     EmailListWidget* email_list_;
     EmailViewWidget* email_view_;
-    QSplitter* main_splitter_;
-    QSplitter* right_splitter_;
+    QStackedWidget* mail_stack_;
+    QWidget* list_page_;
+    QWidget* detail_page_;
+    QPushButton* btn_back_to_list_;
 
     // Status
     QLabel* status_label_;

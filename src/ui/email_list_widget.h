@@ -2,7 +2,7 @@
 #define EMAIL_LIST_WIDGET_H
 
 #include <QWidget>
-#include <QTableWidget>
+#include <QListWidget>
 #include <vector>
 #include "../core/email.h"
 
@@ -20,10 +20,10 @@ signals:
     void email_selected(int email_id);
 
 private slots:
-    void on_cell_clicked(int row, int column);
+    void on_item_clicked(QListWidgetItem* item);
 
 private:
-    QTableWidget* table_;
+    QListWidget* list_;
     std::vector<Email> emails_;
     int selected_email_id_ = -1;  // 缓存选中 ID，不受焦点影响
 };

@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QDir>
+#include <QFont>
 #include <QStandardPaths>
 #include <iostream>
 
@@ -44,6 +45,8 @@ int main(int argc, char* argv[]) {
     app.setApplicationName("MailSystem");
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("CNP");
+    QFont::insertSubstitution(QStringLiteral("Fixedsys"), QStringLiteral("Microsoft YaHei UI"));
+    app.setFont(QFont(QStringLiteral("Microsoft YaHei UI"), 9));
 
     // Ensure data directories exist
     ensure_data_dirs();
