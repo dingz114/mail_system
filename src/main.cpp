@@ -46,6 +46,11 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("CNP");
     QFont::insertSubstitution(QStringLiteral("Fixedsys"), QStringLiteral("Microsoft YaHei UI"));
+    QFont::insertSubstitution(QStringLiteral("Modern"), QStringLiteral("Microsoft YaHei UI"));
+    QFont::insertSubstitution(QStringLiteral("MS Sans Serif"), QStringLiteral("Microsoft YaHei UI"));
+    QFont::insertSubstitution(QStringLiteral("MS Serif"), QStringLiteral("Microsoft YaHei UI"));
+    QFont::insertSubstitution(QStringLiteral("Roman"), QStringLiteral("Microsoft YaHei UI"));
+    QFont::insertSubstitution(QStringLiteral("Script"), QStringLiteral("Microsoft YaHei UI"));
     app.setFont(QFont(QStringLiteral("Microsoft YaHei UI"), 9));
 
     // Ensure data directories exist

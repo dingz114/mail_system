@@ -1,16 +1,19 @@
 #include "email_list_widget.h"
+#include "../core/mime_decoder.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QDateTime>
 #include <QFont>
 #include <QPainter>
+#include <QPainterPath>
+#include <QRegularExpression>
 #include <QScrollBar>
-#include <QStyleOptionButton>
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
 #include <QVBoxLayout>
 
+#include <functional>
 #include <set>
 
 namespace {
@@ -19,9 +22,52 @@ constexpr int kEmailRole = Qt::UserRole;
 constexpr int kRowRole = Qt::UserRole + 1;
 constexpr int kCheckedRole = Qt::UserRole + 2;  // 自定义复选框状态
 
+QString replace_regex(QString input,
+                      const QRegularExpression& re,
+                      const std::function<QString(const QRegularExpressionMatch&)>& replacer) {
+    QString result;
+    int offset = 0;
+    QRegularExpressionMatchIterator it = re.globalMatch(input);
+    while (it.hasNext()) {
+        QRegularExpressionMatch match = it.next();
+        result += input.mid(offset, match.capturedStart() - offset);
+        result += replacer(match);
+        offset = match.capturedEnd();
+    }
+    result += input.mid(offset);
+    return result;
+}
+
+QString decode_display_entities(QString text) {
+    text.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+    text.replace(QStringLiteral("&lt;"), QStringLiteral("<"));
+    text.replace(QStringLiteral("&gt;"), QStringLiteral(">"));
+    text.replace(QStringLiteral("&quot;"), QStringLiteral("\""));
+    text.replace(QStringLiteral("&apos;"), QStringLiteral("'"));
+
+    QRegularExpression entity_re(QStringLiteral("&#(x[0-9A-Fa-f]+|[0-9]+);"));
+    return replace_regex(text, entity_re, [](const QRegularExpressionMatch& match) {
+        QString raw = match.captured(1);
+        bool ok = false;
+        uint codepoint = 0;
+        if (raw.startsWith(QLatin1Char('x'), Qt::CaseInsensitive)) {
+            codepoint = raw.mid(1).toUInt(&ok, 16);
+        } else {
+            codepoint = raw.toUInt(&ok, 10);
+        }
+        if (!ok || codepoint > 0x10FFFF) {
+            return match.captured(0);
+        }
+        char32_t cp = static_cast<char32_t>(codepoint);
+        return QString::fromUcs4(&cp, 1);
+    });
+}
+
 QString display_sender(const Email& mail) {
     if (!mail.sender_name.empty()) {
-        return QString::fromStdString(mail.sender_name);
+        MimeDecoder decoder;
+        return decode_display_entities(
+            QString::fromStdString(decoder.decode_rfc2047(mail.sender_name)));
     }
     if (!mail.sender_addr.empty()) {
         return QString::fromStdString(mail.sender_addr);
@@ -30,7 +76,11 @@ QString display_sender(const Email& mail) {
 }
 
 QString display_subject(const Email& mail) {
-    QString subject = QString::fromStdString(mail.subject.empty() ? "(无主题)" : mail.subject);
+    MimeDecoder decoder;
+    QString subject = mail.subject.empty()
+        ? QStringLiteral("(无主题)")
+        : decode_display_entities(
+              QString::fromStdString(decoder.decode_rfc2047(mail.subject)));
     QString preview = QString::fromStdString(mail.body_plain).simplified();
 
     if (!preview.isEmpty()) {
@@ -74,7 +124,7 @@ public:
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         Q_UNUSED(option)
         Q_UNUSED(index)
-        return QSize(0, 72);
+        return QSize(0, 76);
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -99,48 +149,47 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
 
-        QRect outer = option.rect.adjusted(8, 3, -8, -3);
-        QColor background = Qt::transparent;
-        if (selected) {
-            background = QColor("#EAF3FF");
+        QRect outer = option.rect.adjusted(12, 5, -12, -5);
+        QColor background("#FFFFFF");
+        QColor border("#EDF2F7");
+        if (checked) {
+            background = QColor("#F0F8FF");
+            border = QColor("#B9DDF8");
+        } else if (selected) {
+            background = QColor("#F6FBFF");
+            border = QColor("#CFE7FA");
         } else if (hovered) {
-            background = QColor("#F6F9FC");
+            background = QColor("#F8FBFD");
+            border = QColor("#DDEAF3");
         }
-        if (background.isValid() && background.alpha() > 0) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(background);
-            painter->drawRoundedRect(outer, 8, 8);
-        }
-
-        if (!selected) {
-            painter->setPen(QColor("#D5DCE4"));
-            painter->drawLine(option.rect.left() + 20, option.rect.bottom(), option.rect.right() - 16, option.rect.bottom());
-        }
+        painter->setPen(QPen(border, 1));
+        painter->setBrush(background);
+        painter->drawRoundedRect(outer, 8, 8);
 
         // 多选模式下绘制复选框
         int checkbox_width = 0;
         if (show_checkbox) {
-            checkbox_width = 36;
-            QStyleOptionButton cb_opt;
-            cb_opt.rect = QRect(outer.left() + 8, outer.top() + (outer.height() - 20) / 2, 20, 20);
-            cb_opt.state = QStyle::State_Enabled | QStyle::State_Active;
+            checkbox_width = 40;
+            QRectF box(outer.left() + 14, outer.top() + (outer.height() - 18) / 2.0, 18, 18);
+            painter->setPen(QPen(checked ? QColor("#2F80ED") : QColor("#B8C4D2"), 1.4));
+            painter->setBrush(checked ? QColor("#2F80ED")
+                                      : (hovered ? QColor("#F1F6FB") : QColor("#FFFFFF")));
+            painter->drawRoundedRect(box, 5, 5);
             if (checked) {
-                cb_opt.state |= QStyle::State_On;
-            } else {
-                cb_opt.state |= QStyle::State_Off;
+                QPainterPath check;
+                check.moveTo(box.left() + 4.2, box.top() + 9.4);
+                check.lineTo(box.left() + 7.5, box.top() + 12.4);
+                check.lineTo(box.left() + 14.0, box.top() + 5.6);
+                painter->setPen(QPen(QColor("#FFFFFF"), 2.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                painter->drawPath(check);
             }
-            // 悬停时高亮复选框
-            if (hovered) {
-                cb_opt.state |= QStyle::State_MouseOver;
-            }
-            QApplication::style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &cb_opt, painter, nullptr);
         }
 
-        QRect content = outer.adjusted(30 + checkbox_width, 10, -16, -10);
-        QRect dot_rect(outer.left() + 14 + checkbox_width, outer.top() + (outer.height() - 8) / 2, 8, 8);
+        QRect content = outer.adjusted(22 + checkbox_width, 10, -18, -10);
+        QRect dot_rect(outer.left() + 12 + checkbox_width, outer.top() + (outer.height() - 8) / 2, 7, 7);
         if (unread) {
             painter->setPen(Qt::NoPen);
-            painter->setBrush(QColor("#1677FF"));
+            painter->setBrush(QColor("#21A8A3"));
             painter->drawEllipse(dot_rect);
         }
 
@@ -163,17 +212,17 @@ public:
         QRect subject_rect(content.left(), content.top() + 28, content.width(), 22);
 
         painter->setFont(sender_font);
-        painter->setPen(unread ? QColor("#17212F") : QColor("#2F3D4C"));
+        painter->setPen(unread ? QColor("#102033") : QColor("#344256"));
         painter->drawText(sender_rect, Qt::AlignLeft | Qt::AlignVCenter,
                           sender_metrics.elidedText(display_sender(mail), Qt::ElideRight, sender_rect.width()));
 
         painter->setFont(time_font);
-        painter->setPen(unread ? QColor("#1677FF") : QColor("#8A94A6"));
+        painter->setPen(unread ? QColor("#2F80ED") : QColor("#8A97A8"));
         painter->drawText(time_rect, Qt::AlignRight | Qt::AlignVCenter,
                           time_metrics.elidedText(time, Qt::ElideRight, time_rect.width()));
 
         painter->setFont(subject_font);
-        painter->setPen(QColor("#8A94A6"));
+        painter->setPen(unread ? QColor("#66758A") : QColor("#8A97A8"));
         painter->drawText(subject_rect, Qt::AlignLeft | Qt::AlignVCenter,
                           subject_metrics.elidedText(display_subject(mail), Qt::ElideRight, subject_rect.width()));
 
@@ -200,6 +249,10 @@ EmailListWidget::EmailListWidget(QWidget* parent) : QWidget(parent), selected_em
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setMouseTracking(true);
     list_->setUniformItemSizes(false);
+    list_->setStyleSheet(
+        "QListWidget#emailListView { background: #FAFCFE; padding: 8px 0; }"
+        "QListWidget#emailListView::item { border: none; background: transparent; }"
+        "QListWidget#emailListView::item:selected { background: transparent; }");
     list_->setItemDelegate(new EmailItemDelegate(&emails_, &multi_select_, list_));
 
     // 监听滚动条，接近底部时触发加载更多
@@ -222,7 +275,7 @@ void EmailListWidget::set_emails(const std::vector<Email>& emails) {
         auto* item = new QListWidgetItem(list_);
         item->setData(kEmailRole, mail.id);
         item->setData(kRowRole, i);
-        item->setSizeHint(QSize(0, 72));
+        item->setSizeHint(QSize(0, 76));
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         item->setData(kCheckedRole, false);
     }
@@ -241,7 +294,7 @@ void EmailListWidget::append_emails(const std::vector<Email>& emails) {
         auto* item = new QListWidgetItem(list_);
         item->setData(kEmailRole, emails[i].id);
         item->setData(kRowRole, row);
-        item->setSizeHint(QSize(0, 72));
+        item->setSizeHint(QSize(0, 76));
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         item->setData(kCheckedRole, false);
     }
@@ -301,6 +354,16 @@ void EmailListWidget::mark_email_read(int email_id) {
     }
 }
 
+void EmailListWidget::mark_emails_read(const std::vector<int>& email_ids) {
+    std::set<int> ids(email_ids.begin(), email_ids.end());
+    for (auto& email : emails_) {
+        if (ids.count(email.id)) {
+            email.is_read = true;
+        }
+    }
+    list_->viewport()->update();
+}
+
 int EmailListWidget::selected_count() const {
     int count = 0;
     for (int i = 0; i < list_->count(); ++i) {
@@ -310,6 +373,23 @@ int EmailListWidget::selected_count() const {
         }
     }
     return count;
+}
+
+bool EmailListWidget::all_selected() const {
+    const int count = list_->count();
+    return count > 0 && selected_count() == count;
+}
+
+void EmailListWidget::set_all_checked(bool checked) {
+    for (int i = 0; i < list_->count(); ++i) {
+        QListWidgetItem* item = list_->item(i);
+        if (item) {
+            item->setData(kCheckedRole, checked);
+        }
+    }
+    list_->clearSelection();
+    list_->viewport()->update();
+    emit selection_changed();
 }
 
 void EmailListWidget::rebuild_items() {
@@ -330,7 +410,7 @@ void EmailListWidget::rebuild_items() {
         auto* item = new QListWidgetItem(list_);
         item->setData(kEmailRole, mail.id);
         item->setData(kRowRole, i);
-        item->setSizeHint(QSize(0, 72));
+        item->setSizeHint(QSize(0, 76));
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         item->setData(kCheckedRole, checked_ids.count(mail.id) ? true : false);
     }
@@ -344,6 +424,7 @@ void EmailListWidget::on_item_clicked(QListWidgetItem* item) {
         // 多选模式：手动切换自定义复选框状态
         bool checked = item->data(kCheckedRole).toBool();
         item->setData(kCheckedRole, !checked);
+        list_->clearSelection();
         // 触发重绘以更新复选框外观
         list_->update(list_->indexFromItem(item));
         emit selection_changed();

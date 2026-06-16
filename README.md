@@ -1,6 +1,6 @@
 # Mail System — SMTP & POP3 Email Client
 
-计算机网络实践课程项目：基于 C++ 原生 Socket 编程的邮件系统（SMTP + POP3 客户端），MySQL 数据库存储，Qt 6 构建 Windows 图形界面，现代扁平化 UI 风格。
+计算机网络实践课程项目：基于 C++ 原生 Socket 编程的邮件系统（SMTP + POP3 客户端），MySQL 数据库存储，Qt 6.5.3 构建 Windows 图形界面，现代简约 UI 风格。
 
 ## 功能
 
@@ -8,26 +8,26 @@
 |------|------|
 | 📧 **编写邮件** | 收件人/抄送、纯文本 + HTML 正文、文件附件 |
 | 📤 **发送邮件** | SMTP 协议，SSL/TLS 加密（465），STARTTLS（587），AUTH LOGIN |
-| 📥 **接收邮件** | POP3 协议，SSL/TLS 加密（995），UIDL 去重 |
+| 📥 **接收邮件** | POP3 协议，SSL/TLS 加密（995），支持刷新新邮件、接收全部和接收进度提示 |
 | 📖 **阅读邮件** | 邮件列表（发件人/主题/日期），正文渲染，附件展示 |
 | 📝 **草稿编辑** | 保存草稿 → 点击继续编辑 → 修改后发送或再次保存 |
 | 🔄 **回复/转发** | 引用原邮件，自动填充收件人和主题 |
-| 🗑️ **删除邮件** | 软删除，移入废纸篓 |
+| 🗑️ **删除邮件** | 软删除，移入废纸篓；支持多选、全选、批量删除和批量标为已读 |
 | 📋 **多账号** | 多个邮箱账号独立管理，各自收件箱/已发送/草稿/废纸篓 |
 | 🔍 **连接测试** | 账号设置中可分别测试 SMTP 发送和 POP3 接收连接 |
-| 🌐 **预设模板** | QQ邮箱 / 163邮箱 / 126邮箱 / Outlook / Gmail 一键填充 |
+| 🌐 **预设模板** | QQ邮箱 / 163邮箱 / 126邮箱 / Outlook / Gmail / 通用邮箱自动填充 |
 
 ## 技术栈
 
 | 层面 | 技术 |
 |------|------|
 | 语言 | C++17 |
-| GUI | Qt 6.5（Widgets，现代化 QSS 样式表） |
+| GUI | Qt 6.5.3（Widgets，现代化 QSS 样式表） |
 | 数据库 | MySQL 8.0（C API / libmysql） |
 | 加密 | OpenSSL 3.x |
 | Socket | Winsock2 + 非阻塞 I/O |
 | 字符集 | utf8mb4，支持中文主题/正文/附件名（RFC 2047 + GBK 转换） |
-| 构建 | CMake 3.16+，MinGW-w64 13.1 |
+| 构建 | CMake 3.16+，MinGW-w64 |
 
 ## 项目结构
 
@@ -83,74 +83,53 @@ mail_system/
 
 | 依赖 | 本机路径 |
 |------|----------|
-| Qt 6.5（MinGW） | `D:/huawei/qt/6.5.3/mingw_64/` |
-| MySQL Server 8.0 | `C:/Program Files/MySQL/MySQL Server 8.0/` |
-| OpenSSL | `D:/ProgramData/miniconda3/Library/` |
-| CMake | `D:/huawei/qt/Tools/CMake_64/bin/cmake.exe` |
-| MinGW-w64 | `D:/huawei/qt/Tools/mingw1310_64/bin/g++.exe` |
+| Qt 6.5.3（MinGW） | `D:/code/email_system/.deps/Qt/6.5.3/mingw_64/` |
+| Qt Tools / MinGW | `D:/code/email_system/.deps/QtTools/Tools/mingw1120_64/` |
+| MySQL Server 8.0 | `D:/code/email_system/.deps/mysql/Library/` |
+| OpenSSL | `D:/anaconda/Library/` |
+| CMake | `%APPDATA%/Python/Python312/Scripts/cmake.exe` |
 
 ### ① 启动 MySQL
 
-以**管理员身份**运行终端：
+当前项目推荐使用 `run.ps1` 自动启动本地 MySQL。MySQL 数据目录位于：
 
 ```powershell
-net start MySQL
+D:\code\email_system\.deps\mysql-data
 ```
 
-> 服务名可能是 `MySQL`、`MySQL80`。不确定时运行 `sc query state= all | findstr MySQL` 查看。
+如果 3306 端口没有 MySQL 监听，`run.ps1` 会启动 `.deps/mysql/Library/bin/mysqld.exe`。
 
 ### ② 建表
 
 ```sql
-mysql -u root -p
-source D:/HuaweiMoveData/Users/huawei/Desktop/mail_system/mail_system/sql/schema.sql;
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-### ③ 修改数据库密码
+`run.ps1` 会调用 `scripts/init_database.py` 执行 `sql/schema.sql`，并将本地 MySQL root 密码设置为 `865486`。
 
-编辑 `src/main.cpp` 第 18 行：
+### ③ 数据库密码
 
 ```cpp
-static const char* DB_PASSWORD = "你的MySQL密码";
+static const char* DB_PASSWORD = "865486";
 ```
 
 > 其他参数（主机 localhost、端口 3306、用户名 root、库名 mail_system）无需改动。
->
-> `CMakeLists.txt` 通常也不需要改——MySQL 和 OpenSSL 路径已根据本机配置好。仅当你把它们装到不同位置时才需修改第 21 行 `MYSQL_ROOT` 和第 33 行 `OPENSSL_ROOT`。
 
 ### ④ 编译
 
-**方式一：Qt 终端（推荐）**
-
-开始菜单搜索 **"Qt 6.5.3 (MinGW 13.1.0 64-bit)"**，打开后：
-
-```bash
-cd D:/HuaweiMoveData/Users/huawei/Desktop/mail_system/mail_system
-cmake -B build -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH="D:/huawei/qt/6.5.3/mingw_64" -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
-
-**方式二：PowerShell**
-
 ```powershell
-cd D:\HuaweiMoveData\Users\huawei\Desktop\mail_system\mail_system
-$env:PATH = "D:\huawei\qt\Tools\mingw1310_64\bin;D:\huawei\qt\Tools\CMake_64\bin;$env:PATH"
-cmake -B build -G "MinGW Makefiles" `
-    -DCMAKE_PREFIX_PATH="D:/huawei/qt/6.5.3/mingw_64" `
-    -DCMAKE_BUILD_TYPE=Release `
-    -DCMAKE_CXX_COMPILER="D:/huawei/qt/Tools/mingw1310_64/bin/g++.exe" `
-    -DCMAKE_MAKE_PROGRAM="D:/huawei/qt/Tools/mingw1310_64/bin/mingw32-make.exe"
-cmake --build build
+cd D:\code\email_system\mail_system
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-**方式三：Qt Creator**
+**Qt Creator**
 
 File → Open File or Project → 选 `CMakeLists.txt` → Kit 选 `Qt 6.5.3 MinGW 64-bit` → Build。
 
 ### ⑤ 运行
 
 ```powershell
-.\build\MailSystem.exe
+powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
 > `windeployqt` 已自动部署 Qt / MinGW / MySQL / OpenSSL 全部运行时 DLL，无需设置 PATH。
@@ -168,30 +147,33 @@ File → Open File or Project → 选 `CMakeLists.txt` → Kit 选 `Qt 6.5.3 Min
 | 账号名称 | 自定义，如 "我的QQ邮箱" |
 | 邮箱地址 | 完整邮箱地址 |
 | 用户名 | 通常与邮箱地址相同 |
-| 授权码 | **授权码，不是登录密码！** |
+| 授权码或密码 | 按邮箱要求填写授权码、应用专用密码或登录密码 |
 | SMTP 服务器 | 如 `smtp.qq.com` |
 | SMTP 端口 | 465（SSL） |
 | POP3 服务器 | 如 `pop.qq.com` |
 | POP3 端口 | 995（SSL） |
 
-可通过 **快速设置** 下拉框选择预设模板自动填充。填写后可点击 **测试发送** / **测试接收** 验证。
+程序会根据邮箱后缀自动填充常见服务器配置，也可通过 **快速设置** 下拉框选择预设模板。填写后可点击 **测试发送** / **测试接收** 验证。
 
-> ⚠️ **QQ邮箱 / 163邮箱 必须使用授权码！**
+> ⚠️ **QQ邮箱 / 163邮箱通常必须使用授权码！Gmail 通常需要应用专用密码。**
 >
 > - QQ邮箱：网页版 → 设置 → 账户 → POP3/SMTP服务 → 开启 → 生成授权码（16位字母）
 > - 163邮箱：网页版 → 设置 → POP3/SMTP/IMAP → 开启 → 新增授权码
+> - Gmail：Google 账号开启两步验证后，生成“应用专用密码”；同时确认 Gmail 设置中已开启 POP。
 
 ### 收发邮件
 
 | 操作 | 方式 |
 |------|------|
-| 接收邮件 | 点击工具栏 **📥 接收** |
+| 刷新新邮件 | 点击工具栏 **刷新** |
+| 接收全部 | 点击工具栏 **接收全部**，会重新下载服务器上的全部邮件 |
 | 写新邮件 | 点击工具栏 **✏️ 写信** |
 | 回复邮件 | 选中邮件后点击 **↩ 回复** |
 | 删除邮件 | 选中邮件后点击 **🗑 删除** |
 | 编辑草稿 | 点击左侧 **📝 草稿箱** → 点击草稿邮件 → 弹出编辑对话框 → 修改后发送或再保存 |
 | 切换文件夹 | 点击左侧 **收件箱/已发送/草稿箱/废纸篓** |
 | 切换账号 | 点击左侧底部下拉框 |
+| 批量操作 | 点击 **多选** 后可全选、批量删除、批量标为已读 |
 
 ---
 

@@ -2,10 +2,11 @@
 #include <sstream>
 #include <iostream>
 #include <map>
+#include <chrono>
 
 Pop3Client::Pop3Client()
     : last_success_(false), connected_(false),
-      progress_cb_(nullptr), progress_userdata_(nullptr) {}
+      progress_cb_(nullptr) {}
 
 Pop3Client::~Pop3Client() {
     quit();
@@ -13,7 +14,8 @@ Pop3Client::~Pop3Client() {
 
 std::vector<Email> Pop3Client::receive_emails(const std::string& server, int port, bool use_ssl,
                                                const std::string& username, const std::string& password,
-                                               int* new_count) {
+                                               int* new_count,
+                                               const std::unordered_set<std::string>* skip_uids) {
     std::vector<Email> emails;
 
     if (!connect(server, port, use_ssl)) {
@@ -64,14 +66,33 @@ std::vector<Email> Pop3Client::receive_emails(const std::string& server, int por
         uid_map[p.first] = p.second;
     }
 
-    // Retrieve each email
+    int fetch_total = count;
+    if (skip_uids && !skip_uids->empty() && !uid_map.empty()) {
+        fetch_total = 0;
+        for (int i = 1; i <= count; ++i) {
+            auto it = uid_map.find(i);
+            if (it == uid_map.end() || !skip_uids->count(it->second)) {
+                ++fetch_total;
+            }
+        }
+    }
+
+    int fetched = 0;
     for (int i = 1; i <= count; ++i) {
+        auto uid_it = uid_map.find(i);
+        if (skip_uids && uid_it != uid_map.end() && skip_uids->count(uid_it->second)) {
+            continue;
+        }
+
         if (progress_cb_) {
-            progress_cb_(i, count, progress_userdata_);
+            progress_cb_(++fetched, fetch_total);
         }
 
         std::string raw = retr(i);
         if (!last_success_) {
+            if (last_error_.empty()) {
+                last_error_ = "Failed to retrieve message " + std::to_string(i);
+            }
             continue;  // Skip failed retrievals
         }
 
@@ -273,10 +294,46 @@ std::string Pop3Client::recv_line() {
 }
 
 std::string Pop3Client::recv_multiline() {
-    // POP3 multi-line response ends with "\r\n.\r\n"
-    std::string data = socket_.recv_until("\r\n.\r\n", 120);
+    // POP3 multi-line response ends with "\r\n.\r\n". Large attachments can
+    // legitimately take several minutes; treat timeout as "no data for a
+    // while", not as a fixed total transfer duration.
+    std::string data;
+    char buffer[65536];
+    auto started_at = std::chrono::steady_clock::now();
+    auto last_data_at = std::chrono::steady_clock::now();
+    constexpr int kReadTimeoutSec = 300;
+    constexpr int kMaxTransferMinutes = 60;
+
+    while (true) {
+        int bytes = socket_.is_ssl_connected()
+            ? socket_.recv(buffer, sizeof(buffer), kReadTimeoutSec)
+            : socket_.tcp().recv(buffer, sizeof(buffer), kReadTimeoutSec);
+
+        if (bytes > 0) {
+            data.append(buffer, bytes);
+            last_data_at = std::chrono::steady_clock::now();
+            if (data.find("\r\n.\r\n") != std::string::npos ||
+                data.find("\n.\n") != std::string::npos) {
+                break;
+            }
+            continue;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto idle = std::chrono::duration_cast<std::chrono::seconds>(now - last_data_at).count();
+        auto total = std::chrono::duration_cast<std::chrono::minutes>(now - started_at).count();
+        if (idle >= kReadTimeoutSec || total >= kMaxTransferMinutes) {
+            break;
+        }
+    }
+
     last_response_ = data;
-    last_success_ = check_ok(data);
+    const bool complete = data.find("\r\n.\r\n") != std::string::npos ||
+                          data.find("\n.\n") != std::string::npos;
+    last_success_ = check_ok(data) && complete;
+    if (!last_success_ && check_ok(data)) {
+        last_error_ = "POP3 response ended before message terminator; attachment may be incomplete";
+    }
     return data;
 }
 

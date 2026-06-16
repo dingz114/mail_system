@@ -22,7 +22,8 @@ SmtpClient::~SmtpClient() {
 
 bool SmtpClient::send_email(const Email& email,
                              const std::string& smtp_server, int port, bool use_ssl,
-                             const std::string& username, const std::string& password) {
+                             const std::string& username, const std::string& password,
+                             ProgressCallback progress) {
     if (!connect(smtp_server, port, use_ssl)) {
         return false;
     }
@@ -97,7 +98,7 @@ bool SmtpClient::send_email(const Email& email,
         return false;
     }
 
-    if (!data_send(email.body_plain)) {
+    if (!data_send(email.body_plain, progress)) {
         last_error_ = "DATA send failed: " + last_response_;
         return false;
     }
@@ -250,7 +251,7 @@ bool SmtpClient::data_begin() {
     return last_code_ == 354;
 }
 
-bool SmtpClient::data_send(const std::string& mime_message) {
+bool SmtpClient::data_send(const std::string& mime_message, ProgressCallback progress) {
     // Dot-stuffing: any line starting with '.' gets an extra '.'
     std::istringstream iss(mime_message);
     std::ostringstream oss;
@@ -268,10 +269,21 @@ bool SmtpClient::data_send(const std::string& mime_message) {
     oss << "\r\n.\r\n";
 
     std::string data = oss.str();
-    if (socket_.is_ssl_connected()) {
-        socket_.send(data.c_str(), (int)data.size());
-    } else {
-        socket_.tcp().send(data.c_str(), (int)data.size());
+    const size_t total = data.size();
+    if (progress) progress(0, total);
+
+    constexpr size_t kChunkSize = 16 * 1024;
+    size_t sent_total = 0;
+    while (sent_total < total) {
+        size_t chunk = std::min(kChunkSize, total - sent_total);
+        int sent = socket_.is_ssl_connected()
+            ? socket_.send(data.data() + sent_total, static_cast<int>(chunk))
+            : socket_.tcp().send(data.data() + sent_total, static_cast<int>(chunk));
+        if (sent <= 0) {
+            return false;
+        }
+        sent_total += static_cast<size_t>(sent);
+        if (progress) progress(sent_total, total);
     }
 
     recv_response();

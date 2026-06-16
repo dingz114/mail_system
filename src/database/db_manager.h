@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 class DbManager {
 public:
@@ -51,6 +52,8 @@ public:
 
     // ========== Sync State ==========
     bool is_uid_downloaded(int account_id, const std::string& uid);
+    std::unordered_set<std::string> get_downloaded_uids(int account_id);
+    int get_email_id_by_uid(int account_id, const std::string& uid);
     bool mark_uid_downloaded(int account_id, const std::string& uid, int email_id);
 
     // ========== Contacts ==========

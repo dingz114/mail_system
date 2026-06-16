@@ -18,6 +18,8 @@
 
 class EmailListWidget;
 class EmailViewWidget;
+class QProgressBar;
+class QTimer;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -40,8 +42,11 @@ private slots:
     void on_toggle_multi_select();
     void on_batch_delete();
     void on_batch_restore();
+    void on_batch_mark_read();
+    void on_batch_select_all();
     void on_selection_changed();
     void on_load_more();
+    void update_busy_status();
 
 private:
     void setup_ui();
@@ -52,6 +57,15 @@ private:
     void update_folder_counts();
     void update_batch_buttons();
     void show_email_list_page();
+    void receive_from_server(bool only_new);
+    void start_busy_status(const QString& text);
+    void update_receive_progress(int current, int total);
+    void set_status_neutral(const QString& text);
+    void set_status_success(const QString& text);
+    void set_status_error(const QString& text);
+    void begin_send_progress(const QString& text);
+    void update_send_progress(size_t sent, size_t total);
+    void finish_send_progress();
 
     DbManager* db_mgr_;
 
@@ -63,14 +77,15 @@ private:
     QPushButton* btn_reply_;
     QPushButton* btn_delete_;
     QPushButton* btn_restore_;
-    QPushButton* btn_refresh_;
     QPushButton* btn_multi_select_;
 
     // Batch action bar
     QWidget* batch_bar_;
     QLabel* batch_count_label_;
+    QPushButton* btn_batch_select_all_;
     QPushButton* btn_batch_delete_;
     QPushButton* btn_batch_restore_;
+    QPushButton* btn_batch_mark_read_;
     QPushButton* btn_batch_cancel_;
 
     // Folder tree
@@ -90,6 +105,10 @@ private:
 
     // Status
     QLabel* status_label_;
+    QProgressBar* send_progress_bar_ = nullptr;
+    QTimer* status_timer_ = nullptr;
+    QString status_busy_text_;
+    int status_busy_step_ = 0;
 
     // Current state
     std::vector<Account> accounts_;

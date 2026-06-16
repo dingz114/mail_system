@@ -22,10 +22,238 @@
 #include <QThread>
 #include <QScreen>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
+#include <QIcon>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+#include <QProgressBar>
 #include <QStandardPaths>
 #include <QStyle>
+#include <QTimer>
+#include <QDateTime>
+#include <algorithm>
+#include <cctype>
+
+namespace {
+
+QIcon toolbarIcon(const QString& name, const QColor& color) {
+    QPixmap pix(22, 22);
+    pix.fill(Qt::transparent);
+
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    if (name == QStringLiteral("receive")) {
+        p.drawLine(QPointF(11, 4), QPointF(11, 13));
+        p.drawLine(QPointF(7.5, 9.5), QPointF(11, 13));
+        p.drawLine(QPointF(14.5, 9.5), QPointF(11, 13));
+        p.drawLine(QPointF(5, 15), QPointF(5, 18));
+        p.drawLine(QPointF(5, 18), QPointF(17, 18));
+        p.drawLine(QPointF(17, 18), QPointF(17, 15));
+    } else if (name == QStringLiteral("compose")) {
+        p.drawRoundedRect(QRectF(4, 5, 11, 13), 2, 2);
+        p.drawLine(QPointF(7, 9), QPointF(12, 9));
+        p.drawLine(QPointF(7, 12), QPointF(11, 12));
+        p.drawLine(QPointF(13.5, 15.5), QPointF(18, 11));
+        p.drawLine(QPointF(16.5, 9.5), QPointF(18.5, 11.5));
+    } else if (name == QStringLiteral("reply")) {
+        p.drawLine(QPointF(14, 6), QPointF(7, 11));
+        p.drawLine(QPointF(7, 11), QPointF(14, 16));
+        p.drawLine(QPointF(8, 11), QPointF(18, 11));
+    } else if (name == QStringLiteral("delete")) {
+        p.drawLine(QPointF(7, 7), QPointF(15, 7));
+        p.drawLine(QPointF(9, 5), QPointF(13, 5));
+        p.drawRoundedRect(QRectF(7.5, 8, 7, 10), 1.5, 1.5);
+        p.drawLine(QPointF(10, 10.5), QPointF(10, 15.5));
+        p.drawLine(QPointF(12, 10.5), QPointF(12, 15.5));
+    } else if (name == QStringLiteral("restore")) {
+        p.drawLine(QPointF(11, 18), QPointF(11, 9));
+        p.drawLine(QPointF(7.5, 12.5), QPointF(11, 9));
+        p.drawLine(QPointF(14.5, 12.5), QPointF(11, 9));
+        p.drawLine(QPointF(5, 7), QPointF(5, 4));
+        p.drawLine(QPointF(5, 4), QPointF(17, 4));
+        p.drawLine(QPointF(17, 4), QPointF(17, 7));
+    } else if (name == QStringLiteral("refresh")) {
+        p.drawArc(QRectF(5, 5, 12, 12), 35 * 16, 250 * 16);
+        p.drawLine(QPointF(16.5, 5.5), QPointF(17.5, 10));
+        p.drawLine(QPointF(16.5, 5.5), QPointF(12.2, 5.8));
+    } else if (name == QStringLiteral("multi")) {
+        p.drawRoundedRect(QRectF(4, 5, 5, 5), 1.2, 1.2);
+        p.drawRoundedRect(QRectF(4, 13, 5, 5), 1.2, 1.2);
+        p.drawLine(QPointF(12, 7.5), QPointF(18, 7.5));
+        p.drawLine(QPointF(12, 15.5), QPointF(18, 15.5));
+    } else if (name == QStringLiteral("done")) {
+        p.drawRoundedRect(QRectF(4, 4, 14, 14), 3, 3);
+        p.drawLine(QPointF(7.5, 11.2), QPointF(10.2, 14));
+        p.drawLine(QPointF(10.2, 14), QPointF(15, 8.5));
+    } else if (name == QStringLiteral("back")) {
+        p.drawLine(QPointF(14, 6), QPointF(8, 11));
+        p.drawLine(QPointF(8, 11), QPointF(14, 16));
+        p.drawLine(QPointF(8.5, 11), QPointF(18, 11));
+    }
+
+    return QIcon(pix);
+}
+
+void applyToolbarIcon(QPushButton* button, const QString& name, const QColor& color) {
+    button->setIcon(toolbarIcon(name, color));
+    button->setIconSize(QSize(18, 18));
+}
+
+std::string to_utf8(const QString& text) {
+    QByteArray bytes = text.toUtf8();
+    return std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+}
+
+QString from_utf8(const std::string& text) {
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+}
+
+std::string lower_ascii(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+std::string smtp_endpoint_label(const std::string& server, int port, bool ssl) {
+    return server + ":" + std::to_string(port) + (ssl ? " SSL/TLS" : " STARTTLS");
+}
+
+bool is_retryable_smtp_failure(const std::string& error) {
+    const std::string lower = lower_ascii(error);
+    return lower.find("connect failed") != std::string::npos ||
+           lower.find("ssl connect failed") != std::string::npos ||
+           lower.find("tcp connect failed") != std::string::npos ||
+           lower.find("starttls failed") != std::string::npos ||
+           lower.find("does not advertise starttls") != std::string::npos ||
+           lower.find("no smtp greeting") != std::string::npos ||
+           lower.find("unexpected greeting") != std::string::npos;
+}
+
+bool validate_attachments(const Email& email, std::string& error) {
+    for (const auto& att : email.attachments) {
+        QString path = from_utf8(att.file_path);
+        QFileInfo fi(path);
+        if (path.isEmpty() || !fi.exists() || !fi.isFile() || !fi.isReadable()) {
+            error = to_utf8(QStringLiteral("附件文件不存在或无法读取：%1").arg(path));
+            return false;
+        }
+    }
+    return true;
+}
+
+std::pair<bool, std::string> send_email_with_progress(
+    const Email& email,
+    const Account& acc,
+    SmtpClient::ProgressCallback progress) {
+    std::string attachment_error;
+    if (!validate_attachments(email, attachment_error)) {
+        return {false, attachment_error};
+    }
+
+    MimeEncoder enc;
+    Email e = email;
+    e.body_plain = enc.encode(email);
+
+    struct Candidate {
+        std::string server;
+        int port;
+        bool ssl;
+    };
+
+    std::vector<Candidate> candidates;
+    auto add_candidate = [&candidates](const std::string& server, int port, bool ssl) {
+        if (server.empty() || port <= 0) return;
+        for (const auto& existing : candidates) {
+            if (lower_ascii(existing.server) == lower_ascii(server) &&
+                existing.port == port &&
+                existing.ssl == ssl) {
+                return;
+            }
+        }
+        candidates.push_back({server, port, ssl});
+    };
+
+    add_candidate(acc.smtp_server, acc.smtp_port, acc.smtp_ssl);
+
+    const std::string server_lower = lower_ascii(acc.smtp_server);
+    const std::string email_lower = lower_ascii(acc.email_address);
+    if (server_lower.find("gmail.com") != std::string::npos ||
+        email_lower.find("@gmail.com") != std::string::npos) {
+        add_candidate("smtp.gmail.com", 465, true);
+        add_candidate("smtp.gmail.com", 587, false);
+    } else if (server_lower.find("outlook") != std::string::npos ||
+               server_lower.find("office365") != std::string::npos ||
+               email_lower.find("@outlook.") != std::string::npos ||
+               email_lower.find("@hotmail.") != std::string::npos ||
+               email_lower.find("@live.") != std::string::npos) {
+        add_candidate("smtp-mail.outlook.com", 587, false);
+        add_candidate("smtp.office365.com", 587, false);
+    } else {
+        add_candidate(acc.smtp_server, 465, true);
+        add_candidate(acc.smtp_server, 587, false);
+    }
+
+    std::string failures;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const auto& c = candidates[i];
+        SmtpClient smtp;
+        bool ok = smtp.send_email(e, c.server, c.port, c.ssl,
+                                  acc.username, acc.password, progress);
+        if (ok) return {true, ""};
+
+        std::string err = smtp.get_last_error();
+        if (err.empty()) err = smtp.get_last_response();
+        if (err.empty()) err = "No response from SMTP server";
+
+        failures += smtp_endpoint_label(c.server, c.port, c.ssl) + ": " + err;
+        if (i + 1 < candidates.size()) failures += "\n";
+
+        if (!is_retryable_smtp_failure(err)) {
+            break;
+        }
+    }
+
+    return {false, failures};
+}
+
+Email copy_attachments_for_sent(Email email) {
+    QString base_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                       + "/sent_attachments";
+    QDir dir;
+    dir.mkpath(base_dir);
+
+    for (size_t i = 0; i < email.attachments.size(); ++i) {
+        Attachment& att = email.attachments[i];
+        QString src = from_utf8(att.file_path);
+        if (src.isEmpty() || !QFile::exists(src)) continue;
+
+        QFileInfo fi(src);
+        QString safe_name = fi.fileName();
+        safe_name.replace('/', '_');
+        safe_name.replace('\\', '_');
+        safe_name.replace(':', '_');
+        QString dest = QDir(base_dir).filePath(
+            QStringLiteral("%1_%2_%3")
+                .arg(QDateTime::currentMSecsSinceEpoch())
+                .arg(static_cast<int>(i))
+                .arg(safe_name));
+
+        if (QFile::copy(src, dest)) {
+            att.file_path = to_utf8(dest);
+        }
+    }
+    return email;
+}
+
+} // namespace
 
 MainWindow::MainWindow(DbManager* db_mgr, QWidget* parent)
     : QMainWindow(parent), db_mgr_(db_mgr), current_account_id_(-1), current_folder_("inbox") {
@@ -51,13 +279,14 @@ void MainWindow::setup_ui() {
     setCentralWidget(central);
 
     QHBoxLayout* main_layout = new QHBoxLayout(central);
-    main_layout->setContentsMargins(0, 0, 10, 10);
+    main_layout->setContentsMargins(0, 0, 12, 12);
     main_layout->setSpacing(0);
 
     QWidget* left_panel = new QWidget(this);
     left_panel->setObjectName("sidebarPanel");
     left_panel->setFixedWidth(230);
-    left_panel->setStyleSheet("QWidget#sidebarPanel { background: #2C3E50; }");
+    left_panel->setStyleSheet(
+        "QWidget#sidebarPanel { background: #F6FAFE; border-right: 1px solid #E6EEF6; }");
 
     QVBoxLayout* left_layout = new QVBoxLayout(left_panel);
     left_layout->setContentsMargins(0, 0, 0, 0);
@@ -69,14 +298,14 @@ void MainWindow::setup_ui() {
 
     QPushButton* compose_btn = new QPushButton(QStringLiteral("  写信"), left_panel);
     compose_btn->setObjectName("composeSidebarButton");
-    compose_btn->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    applyToolbarIcon(compose_btn, QStringLiteral("compose"), QColor("#FFFFFF"));
     compose_btn->setIconSize(QSize(18, 18));
     compose_btn->setMinimumHeight(48);
     compose_btn->setCursor(Qt::PointingHandCursor);
     auto* compose_shadow = new QGraphicsDropShadowEffect(compose_btn);
     compose_shadow->setBlurRadius(22);
     compose_shadow->setOffset(0, 6);
-    compose_shadow->setColor(QColor(8, 47, 110, 90));
+    compose_shadow->setColor(QColor(47, 128, 237, 54));
     compose_btn->setGraphicsEffect(compose_shadow);
     connect(compose_btn, &QPushButton::clicked, this, &MainWindow::on_compose);
     compose_layout->addWidget(compose_btn);
@@ -84,7 +313,7 @@ void MainWindow::setup_ui() {
 
     QFrame* sidebar_separator = new QFrame(left_panel);
     sidebar_separator->setFrameShape(QFrame::HLine);
-    sidebar_separator->setStyleSheet("color: rgba(255, 255, 255, 0.12); margin: 0 18px;");
+    sidebar_separator->setStyleSheet("color: #E2ECF6; margin: 0 18px;");
     left_layout->addWidget(sidebar_separator);
 
     folder_tree_ = new QTreeWidget(left_panel);
@@ -109,11 +338,11 @@ void MainWindow::setup_ui() {
     QWidget* account_panel = new QWidget(left_panel);
     account_panel->setObjectName("accountBottom");
     account_panel->setStyleSheet(
-        "QWidget#accountBottom { border-top: 1px solid rgba(255, 255, 255, 0.13); }"
-        "QLabel { color: #AFC1D4; }"
-        "QComboBox { background: rgba(255, 255, 255, 0.10); color: #FFFFFF; font-size: 12px;"
-        "border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 6px; padding: 7px 28px 7px 10px; }"
-        "QComboBox:hover { border-color: rgba(255, 255, 255, 0.32); }"
+        "QWidget#accountBottom { border-top: 1px solid #E2ECF6; }"
+        "QLabel { color: #6F7F91; }"
+        "QComboBox { background: #FFFFFF; color: #304154; font-size: 12px;"
+        "border: 1px solid #D7E3EF; border-radius: 6px; padding: 7px 28px 7px 10px; }"
+        "QComboBox:hover { border-color: #AFCBE8; }"
         "QComboBox::drop-down { border: none; width: 24px; }"
         "QComboBox QAbstractItemView { font-size: 12px; }");
 
@@ -122,7 +351,7 @@ void MainWindow::setup_ui() {
     account_layout->setSpacing(8);
 
     QLabel* account_label = new QLabel(QStringLiteral("当前账号"), account_panel);
-    account_label->setStyleSheet("font-size: 12px; color: #AFC1D4;");
+    account_label->setStyleSheet("font-size: 12px; color: #718196;");
     account_layout->addWidget(account_label);
 
     account_combo_ = new QComboBox(account_panel);
@@ -137,7 +366,7 @@ void MainWindow::setup_ui() {
     auto* surface_shadow = new QGraphicsDropShadowEffect(content_surface);
     surface_shadow->setBlurRadius(24);
     surface_shadow->setOffset(0, 6);
-    surface_shadow->setColor(QColor(31, 45, 61, 34));
+    surface_shadow->setColor(QColor(31, 45, 61, 22));
     content_surface->setGraphicsEffect(surface_shadow);
 
     QVBoxLayout* surface_layout = new QVBoxLayout(content_surface);
@@ -155,21 +384,30 @@ void MainWindow::setup_ui() {
     // 批量操作栏（默认隐藏）
     batch_bar_ = new QWidget(list_page_);
     batch_bar_->setObjectName("batchBar");
-    batch_bar_->setFixedHeight(52);
+    batch_bar_->setFixedHeight(56);
     batch_bar_->setStyleSheet(
-        "QWidget#batchBar { background: #EFF6FF; border-bottom: 1px solid #BFDBFE; }");
+        "QWidget#batchBar { background: #F7FBFF; border-bottom: 1px solid #DDECF8; }");
     batch_bar_->setVisible(false);
     auto* batch_layout = new QHBoxLayout(batch_bar_);
     batch_layout->setContentsMargins(20, 0, 12, 0);
     batch_layout->setSpacing(10);
 
     batch_count_label_ = new QLabel(QStringLiteral("已选择 0 封邮件"), batch_bar_);
-    batch_count_label_->setStyleSheet("color: #1677FF; font-weight: 600; font-size: 13px;");
+    batch_count_label_->setStyleSheet("color: #2F80ED; font-weight: 600; font-size: 13px;");
     batch_layout->addWidget(batch_count_label_);
+
+    btn_batch_select_all_ = new QPushButton(QStringLiteral("全选"), batch_bar_);
+    UiStyle::applyGhostButton(btn_batch_select_all_, 64);
+    batch_layout->addWidget(btn_batch_select_all_);
+
     batch_layout->addStretch();
 
+    btn_batch_mark_read_ = new QPushButton(QStringLiteral("标为已读"), batch_bar_);
+    UiStyle::applySecondaryButton(btn_batch_mark_read_, 88);
+    batch_layout->addWidget(btn_batch_mark_read_);
+
     btn_batch_restore_ = new QPushButton(QStringLiteral("批量恢复"), batch_bar_);
-    UiStyle::applyPrimaryButton(btn_batch_restore_, 88);
+    UiStyle::applySecondaryButton(btn_batch_restore_, 88);
     btn_batch_restore_->setVisible(false);
     batch_layout->addWidget(btn_batch_restore_);
 
@@ -198,7 +436,7 @@ void MainWindow::setup_ui() {
     detail_toolbar_layout->setSpacing(8);
 
     btn_back_to_list_ = new QPushButton(QStringLiteral("返回列表"), detail_toolbar);
-    btn_back_to_list_->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    applyToolbarIcon(btn_back_to_list_, QStringLiteral("back"), QColor("#53657A"));
     UiStyle::applyGhostButton(btn_back_to_list_, 96);
     detail_toolbar_layout->addWidget(btn_back_to_list_);
     detail_toolbar_layout->addStretch();
@@ -222,15 +460,107 @@ void MainWindow::setup_ui() {
     connect(btn_back_to_list_, &QPushButton::clicked, this, &MainWindow::show_email_list_page);
 
     // 批量操作栏
+    connect(btn_batch_select_all_, &QPushButton::clicked, this, &MainWindow::on_batch_select_all);
     connect(btn_batch_delete_, &QPushButton::clicked, this, &MainWindow::on_batch_delete);
     connect(btn_batch_restore_, &QPushButton::clicked, this, &MainWindow::on_batch_restore);
+    connect(btn_batch_mark_read_, &QPushButton::clicked, this, &MainWindow::on_batch_mark_read);
     connect(btn_batch_cancel_, &QPushButton::clicked, this, &MainWindow::on_toggle_multi_select);
     connect(email_list_, &EmailListWidget::selection_changed, this, &MainWindow::on_selection_changed);
 
     status_label_ = new QLabel(this);
     status_label_->setStyleSheet("color: #6B7280; font-size: 12px; padding: 2px 8px;");
     statusBar()->addWidget(status_label_);
+    send_progress_bar_ = new QProgressBar(this);
+    send_progress_bar_->setFixedWidth(190);
+    send_progress_bar_->setRange(0, 100);
+    send_progress_bar_->setValue(0);
+    send_progress_bar_->setTextVisible(true);
+    send_progress_bar_->setVisible(false);
+    send_progress_bar_->setStyleSheet(
+        "QProgressBar { border: 1px solid #D7E3EF; border-radius: 5px; "
+        "height: 12px; text-align: center; color: #53657A; background: #F7FBFF; }"
+        "QProgressBar::chunk { background: #2F80ED; border-radius: 4px; }");
+    statusBar()->addPermanentWidget(send_progress_bar_);
     statusBar()->setStyleSheet("QStatusBar { background: #FFFFFF; border-top: 1px solid #E7EBF0; }");
+
+    status_timer_ = new QTimer(this);
+    status_timer_->setInterval(450);
+    connect(status_timer_, &QTimer::timeout, this, &MainWindow::update_busy_status);
+}
+
+void MainWindow::start_busy_status(const QString& text) {
+    status_busy_text_ = text;
+    status_busy_step_ = 0;
+    status_label_->setStyleSheet("color: #2F80ED; font-size: 12px; font-weight: 600; padding: 2px 8px;");
+    update_busy_status();
+    status_timer_->start();
+}
+
+void MainWindow::update_receive_progress(int current, int total) {
+    if (total <= 0) {
+        status_busy_text_ = QStringLiteral("正在获取邮件");
+    } else {
+        status_busy_text_ = QStringLiteral("正在获取第 %1/%2 封").arg(current).arg(total);
+    }
+    status_busy_step_ = 0;
+    update_busy_status();
+}
+
+void MainWindow::begin_send_progress(const QString& text) {
+    start_busy_status(text);
+    if (!send_progress_bar_) return;
+    send_progress_bar_->setRange(0, 0);
+    send_progress_bar_->setFormat(QStringLiteral("准备中"));
+    send_progress_bar_->setVisible(true);
+}
+
+void MainWindow::update_send_progress(size_t sent, size_t total) {
+    if (!send_progress_bar_) return;
+    if (total == 0) {
+        send_progress_bar_->setRange(0, 0);
+        send_progress_bar_->setFormat(QStringLiteral("准备中"));
+        send_progress_bar_->setVisible(true);
+        return;
+    }
+    send_progress_bar_->setRange(0, 100);
+    const int value = qBound(0, static_cast<int>((sent * 100) / total), 100);
+    send_progress_bar_->setValue(value);
+    send_progress_bar_->setFormat(QStringLiteral("%1%").arg(value));
+    send_progress_bar_->setVisible(true);
+}
+
+void MainWindow::finish_send_progress() {
+    if (!send_progress_bar_) return;
+    send_progress_bar_->setVisible(false);
+    send_progress_bar_->setValue(0);
+    send_progress_bar_->setFormat(QStringLiteral("%p%"));
+}
+
+void MainWindow::update_busy_status() {
+    const QString dots(status_busy_step_ + 1, QLatin1Char('.'));
+    status_label_->setText(status_busy_text_ + dots);
+    status_busy_step_ = (status_busy_step_ + 1) % 3;
+}
+
+void MainWindow::set_status_neutral(const QString& text) {
+    if (status_timer_) status_timer_->stop();
+    finish_send_progress();
+    status_label_->setStyleSheet("color: #6B7280; font-size: 12px; padding: 2px 8px;");
+    status_label_->setText(text);
+}
+
+void MainWindow::set_status_success(const QString& text) {
+    if (status_timer_) status_timer_->stop();
+    finish_send_progress();
+    status_label_->setStyleSheet("color: #15803D; font-size: 12px; font-weight: 600; padding: 2px 8px;");
+    status_label_->setText(text);
+}
+
+void MainWindow::set_status_error(const QString& text) {
+    if (status_timer_) status_timer_->stop();
+    finish_send_progress();
+    status_label_->setStyleSheet("color: #DC2626; font-size: 12px; font-weight: 600; padding: 2px 8px;");
+    status_label_->setText(text);
 }
 
 void MainWindow::setup_toolbar() {
@@ -246,42 +576,36 @@ void MainWindow::setup_toolbar() {
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar_->addWidget(spacer);
 
-    btn_receive_ = new QPushButton(QStringLiteral("收信"), this);
-    btn_receive_->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
+    btn_receive_ = new QPushButton(QStringLiteral("刷新"), this);
+    applyToolbarIcon(btn_receive_, QStringLiteral("refresh"), QColor("#2F80ED"));
     UiStyle::applyGhostButton(btn_receive_, 82);
     toolbar_->addWidget(btn_receive_);
     connect(btn_receive_, &QPushButton::clicked, this, &MainWindow::on_receive);
 
     btn_compose_ = new QPushButton(QStringLiteral("写信"), this);
-    btn_compose_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    applyToolbarIcon(btn_compose_, QStringLiteral("compose"), QColor("#2F80ED"));
     UiStyle::applyGhostButton(btn_compose_, 82);
     toolbar_->addWidget(btn_compose_);
     connect(btn_compose_, &QPushButton::clicked, this, &MainWindow::on_compose);
 
     btn_reply_ = new QPushButton(QStringLiteral("回复"), this);
-    btn_reply_->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    applyToolbarIcon(btn_reply_, QStringLiteral("reply"), QColor("#4F6FD9"));
     UiStyle::applyGhostButton(btn_reply_, 82);
     toolbar_->addWidget(btn_reply_);
     connect(btn_reply_, &QPushButton::clicked, this, &MainWindow::on_reply);
 
     btn_delete_ = new QPushButton(QStringLiteral("删除"), this);
-    btn_delete_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    applyToolbarIcon(btn_delete_, QStringLiteral("delete"), QColor("#D64545"));
     UiStyle::applyDangerGhostButton(btn_delete_, 82);
     toolbar_->addWidget(btn_delete_);
     connect(btn_delete_, &QPushButton::clicked, this, &MainWindow::on_delete_mail);
 
-    btn_restore_ = new QPushButton(QStringLiteral("恢复"), this);
-    btn_restore_->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
-    UiStyle::applyGhostButton(btn_restore_, 82);
+    btn_restore_ = new QPushButton(QStringLiteral("接收全部"), this);
+    applyToolbarIcon(btn_restore_, QStringLiteral("receive"), QColor("#21A8A3"));
+    UiStyle::applyGhostButton(btn_restore_, 96);
     btn_restore_->setVisible(true);
     toolbar_->addWidget(btn_restore_);
     connect(btn_restore_, &QPushButton::clicked, this, &MainWindow::on_restore_mail);
-
-    btn_refresh_ = new QPushButton(QStringLiteral("刷新"), this);
-    btn_refresh_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
-    UiStyle::applyGhostButton(btn_refresh_, 82);
-    toolbar_->addWidget(btn_refresh_);
-    connect(btn_refresh_, &QPushButton::clicked, this, &MainWindow::on_refresh);
 
     // 分隔线
     QWidget* sep = new QWidget(this);
@@ -291,6 +615,7 @@ void MainWindow::setup_toolbar() {
     toolbar_->addWidget(sep);
 
     btn_multi_select_ = new QPushButton(QStringLiteral("多选"), this);
+    applyToolbarIcon(btn_multi_select_, QStringLiteral("multi"), QColor("#53657A"));
     UiStyle::applySecondaryButton(btn_multi_select_, 88);
     toolbar_->addWidget(btn_multi_select_);
     connect(btn_multi_select_, &QPushButton::clicked, this, &MainWindow::on_toggle_multi_select);
@@ -459,7 +784,7 @@ void MainWindow::on_email_selected(int email_id) {
 
 void MainWindow::on_send_draft(int draft_id, const Email& updated) {
     Account acc = db_mgr_->get_account(current_account_id_);
-    status_label_->setText(QStringLiteral("发送草稿中..."));
+    begin_send_progress(QStringLiteral("发送草稿中"));
 
     typedef std::pair<bool, std::string> SR;
     auto* w = new QFutureWatcher<SR>(this);
@@ -468,44 +793,58 @@ void MainWindow::on_send_draft(int draft_id, const Email& updated) {
         if (r.first) {
             db_mgr_->mark_deleted(draft_id);
             Email sent = updated; sent.account_id = acc.id; sent.folder = "sent";
+            sent = copy_attachments_for_sent(sent);
             auto now = std::time(nullptr); char buf[64];
             strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
             sent.received_date = buf;
             int eid = db_mgr_->save_email(sent);
-            for (const auto& att : sent.attachments) {
-                db_mgr_->add_attachment(eid, att);
+            if (eid > 0) {
+                for (const auto& att : sent.attachments) {
+                    db_mgr_->add_attachment(eid, att);
+                }
             }
-            status_label_->setText(QStringLiteral("草稿已发送！"));
+            load_emails(current_folder_); update_folder_counts();
+            set_status_success(QStringLiteral("草稿已发送"));
         } else {
-            QMessageBox::critical(this, QStringLiteral("发送失败"), QString::fromStdString(r.second));
-            status_label_->setText(QStringLiteral("发送失败"));
+            QMessageBox::critical(this, QStringLiteral("发送失败"), from_utf8(r.second));
+            set_status_error(QStringLiteral("发送失败 — %1").arg(from_utf8(r.second)));
+            load_emails(current_folder_); update_folder_counts();
         }
-        load_emails(current_folder_); update_folder_counts();
         w->deleteLater();
     });
-    w->setFuture(QtConcurrent::run([updated, acc]() -> SR {
-        MimeEncoder enc; SmtpClient smtp;
-        Email e = updated; e.body_plain = enc.encode(updated);
-        bool ok = smtp.send_email(e, acc.smtp_server, acc.smtp_port, acc.smtp_ssl, acc.username, acc.password);
-        return {ok, ok ? "" : smtp.get_last_error()};
+        w->setFuture(QtConcurrent::run([this, updated, acc]() -> SR {
+            auto progress = [this](size_t sent, size_t total) {
+                QMetaObject::invokeMethod(this, [this, sent, total]() {
+                    update_send_progress(sent, total);
+                }, Qt::QueuedConnection);
+            };
+            return send_email_with_progress(updated, acc, progress);
     }));
 }
 
 void MainWindow::on_receive() {
+    receive_from_server(true);
+}
+
+void MainWindow::receive_from_server(bool only_new) {
     if (current_account_id_ < 0) {
         QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先添加邮箱账号。")); return;
     }
     Account acc = db_mgr_->get_account(current_account_id_);
+    auto known_uids = only_new ? db_mgr_->get_downloaded_uids(acc.id)
+                               : std::unordered_set<std::string>();
     btn_receive_->setEnabled(false);
-    status_label_->setText(QStringLiteral("正在接收邮件..."));
+    btn_restore_->setEnabled(false);
+    start_busy_status(only_new ? QStringLiteral("正在刷新邮件")
+                               : QStringLiteral("正在接收全部邮件"));
 
     typedef std::pair<std::vector<Email>, std::string> RR;
     auto* w = new QFutureWatcher<RR>(this);
-    connect(w, &QFutureWatcher<RR>::finished, [this, w, acc]() {
+    connect(w, &QFutureWatcher<RR>::finished, [this, w, acc, only_new]() {
         RR r = w->result(); auto emails = r.first; std::string err = r.second;
-        if (!err.empty()) {
-            QMessageBox::warning(this, QStringLiteral("接收失败"), QString::fromStdString(err));
-            status_label_->setText(QStringLiteral("接收失败 — %1").arg(QString::fromStdString(err)));
+        if (!err.empty() && emails.empty()) {
+            QMessageBox::warning(this, QStringLiteral("接收失败"), from_utf8(err));
+            set_status_error(QStringLiteral("接收失败 — %1").arg(from_utf8(err)));
         } else {
             MimeDecoder dec; int new_count = 0;
             int failed_count = 0;
@@ -514,11 +853,30 @@ void MainWindow::on_receive() {
                                  + "/attachments";
             for (auto& email : emails) {
                 std::string uid = email.pop3_uid;
-                if (!uid.empty() && db_mgr_->is_uid_downloaded(acc.id, uid)) continue;
+                if (only_new && !uid.empty() && db_mgr_->is_uid_downloaded(acc.id, uid)) continue;
 
-                Email decoded = dec.decode(email.body_plain, acc.id, attach_dir.toStdString());
+                int old_eid = -1;
+                bool old_is_read = false;
+                bool old_is_flagged = false;
+                if (!only_new && !uid.empty()) {
+                    old_eid = db_mgr_->get_email_id_by_uid(acc.id, uid);
+                    if (old_eid > 0) {
+                        Email old_email = db_mgr_->get_email(old_eid);
+                        old_is_read = old_email.is_read;
+                        old_is_flagged = old_email.is_flagged;
+                    }
+                }
+
+                Email decoded = dec.decode(email.body_plain, acc.id, to_utf8(attach_dir));
                 decoded.pop3_uid = uid;
                 decoded.folder = "inbox";
+                if (old_eid > 0) {
+                    decoded.is_read = old_is_read;
+                    decoded.is_flagged = old_is_flagged;
+                }
+                if (!only_new) {
+                    decoded.is_deleted = false;
+                }
                 if (decoded.received_date.empty()) {
                     auto now = std::time(nullptr);
                     char buf[64];
@@ -528,6 +886,9 @@ void MainWindow::on_receive() {
 
                 int eid = db_mgr_->save_email(decoded);
                 if (eid > 0) {
+                    if (old_eid > 0) {
+                        db_mgr_->delete_permanently(old_eid);
+                    }
                     // 保存附件记录到数据库
                     for (const auto& att : decoded.attachments) {
                         db_mgr_->add_attachment(eid, att);
@@ -541,27 +902,47 @@ void MainWindow::on_receive() {
                     }
                 }
             }
-            if (failed_count > 0) {
+            if (!err.empty()) {
+                QMessageBox::warning(this, QStringLiteral("部分邮件接收失败"),
+                                     QStringLiteral("部分邮件未完整接收：%1").arg(from_utf8(err)));
+                set_status_error((only_new
+                    ? QStringLiteral("接收完成 — %1 封新邮件，部分邮件未完整接收")
+                    : QStringLiteral("接收完成 — %1 封邮件已更新，部分邮件未完整接收"))
+                                     .arg(new_count));
+            } else if (failed_count > 0) {
                 QString msg = QStringLiteral("已接收 %1 封，%2 封保存失败")
                                   .arg(new_count).arg(failed_count);
                 if (!first_save_error.empty()) {
-                    msg += QStringLiteral("\n\n数据库错误：%1").arg(QString::fromStdString(first_save_error));
+                    msg += QStringLiteral("\n\n数据库错误：%1").arg(from_utf8(first_save_error));
                 }
                 QMessageBox::warning(this, QStringLiteral("部分邮件保存失败"), msg);
-                status_label_->setText(QStringLiteral("接收完成 — %1 封新邮件，%2 封保存失败")
-                                           .arg(new_count).arg(failed_count));
+                set_status_error((only_new
+                    ? QStringLiteral("接收完成 — %1 封新邮件，%2 封保存失败")
+                    : QStringLiteral("接收完成 — %1 封邮件已更新，%2 封保存失败"))
+                                     .arg(new_count).arg(failed_count));
             } else {
-                status_label_->setText(QStringLiteral("接收完成 — %1 封新邮件").arg(new_count));
+                set_status_success((only_new
+                    ? QStringLiteral("接收完成 — %1 封新邮件")
+                    : QStringLiteral("接收完成 — %1 封邮件已更新")).arg(new_count));
             }
             load_emails(current_folder_); update_folder_counts();
         }
-        btn_receive_->setEnabled(true); w->deleteLater();
+        btn_receive_->setEnabled(true);
+        btn_restore_->setEnabled(true);
+        w->deleteLater();
     });
-    w->setFuture(QtConcurrent::run([acc]() -> RR {
+    w->setFuture(QtConcurrent::run([this, acc, only_new, known_uids]() -> RR {
         Pop3Client pop3; int nc = 0;
-        auto emails = pop3.receive_emails(acc.pop3_server, acc.pop3_port, acc.pop3_ssl, acc.username, acc.password, &nc);
+        pop3.set_progress_callback([this](int current, int total) {
+            QMetaObject::invokeMethod(this, [this, current, total]() {
+                update_receive_progress(current, total);
+            }, Qt::QueuedConnection);
+        });
+        auto emails = pop3.receive_emails(acc.pop3_server, acc.pop3_port, acc.pop3_ssl,
+                                          acc.username, acc.password, &nc,
+                                          only_new ? &known_uids : nullptr);
         std::string err;
-        if (emails.empty()) err = pop3.get_last_error();
+        err = pop3.get_last_error();
         return {emails, err};
     }));
 }
@@ -574,7 +955,7 @@ void MainWindow::on_compose() {
     if (dlg.exec() == QDialog::Accepted) {
         Email email = dlg.get_email();
         Account acc = db_mgr_->get_account(current_account_id_);
-        status_label_->setText(QStringLiteral("发送中..."));
+        begin_send_progress(QStringLiteral("发送中"));
 
         typedef std::pair<bool, std::string> SR;
         auto* w = new QFutureWatcher<SR>(this);
@@ -582,26 +963,33 @@ void MainWindow::on_compose() {
             SR r = w->result();
             if (r.first) {
                 Email sent = email; sent.account_id = acc.id; sent.folder = "sent";
+                sent = copy_attachments_for_sent(sent);
                 auto now = std::time(nullptr); char buf[64];
                 strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
                 sent.received_date = buf;
                 int eid = db_mgr_->save_email(sent);
                 // 保存附件
-                for (const auto& att : sent.attachments) {
-                    db_mgr_->add_attachment(eid, att);
+                if (eid > 0) {
+                    for (const auto& att : sent.attachments) {
+                        db_mgr_->add_attachment(eid, att);
+                    }
                 }
-                status_label_->setText(QStringLiteral("发送成功！"));
+                load_emails(current_folder_); update_folder_counts();
+                set_status_success(QStringLiteral("发送成功"));
             } else {
-                QMessageBox::critical(this, QStringLiteral("发送失败"), QString::fromStdString(r.second));
-                status_label_->setText(QStringLiteral("发送失败"));
+                QMessageBox::critical(this, QStringLiteral("发送失败"), from_utf8(r.second));
+                set_status_error(QStringLiteral("发送失败 — %1").arg(from_utf8(r.second)));
+                load_emails(current_folder_); update_folder_counts();
             }
-            load_emails(current_folder_); update_folder_counts(); w->deleteLater();
+            w->deleteLater();
         });
-        w->setFuture(QtConcurrent::run([email, acc]() -> SR {
-            MimeEncoder enc; SmtpClient smtp;
-            Email e = email; e.body_plain = enc.encode(email);
-            bool ok = smtp.send_email(e, acc.smtp_server, acc.smtp_port, acc.smtp_ssl, acc.username, acc.password);
-            return {ok, ok ? "" : smtp.get_last_error()};
+        w->setFuture(QtConcurrent::run([this, email, acc]() -> SR {
+            auto progress = [this](size_t sent, size_t total) {
+                QMetaObject::invokeMethod(this, [this, sent, total]() {
+                    update_send_progress(sent, total);
+                }, Qt::QueuedConnection);
+            };
+            return send_email_with_progress(email, acc, progress);
         }));
     }
 }
@@ -621,19 +1009,21 @@ void MainWindow::on_reply() {
         connect(w, &QFutureWatcher<SR>::finished, [this, w]() {
             SR r = w->result();
             if (r.first) {
-                status_label_->setText(QStringLiteral("回复已发送"));
+                set_status_success(QStringLiteral("回复已发送"));
             } else {
-                QMessageBox::critical(this, QStringLiteral("发送失败"), QString::fromStdString(r.second));
-                status_label_->setText(QStringLiteral("回复发送失败"));
+                QMessageBox::critical(this, QStringLiteral("发送失败"), from_utf8(r.second));
+                set_status_error(QStringLiteral("回复发送失败 — %1").arg(from_utf8(r.second)));
             }
             w->deleteLater();
         });
-        status_label_->setText(QStringLiteral("回复发送中..."));
-        w->setFuture(QtConcurrent::run([email, acc]() -> SR {
-            MimeEncoder enc; SmtpClient smtp;
-            Email e = email; e.body_plain = enc.encode(email);
-            bool ok = smtp.send_email(e, acc.smtp_server, acc.smtp_port, acc.smtp_ssl, acc.username, acc.password);
-            return {ok, ok ? "" : smtp.get_last_error()};
+        begin_send_progress(QStringLiteral("回复发送中"));
+        w->setFuture(QtConcurrent::run([this, email, acc]() -> SR {
+            auto progress = [this](size_t sent, size_t total) {
+                QMetaObject::invokeMethod(this, [this, sent, total]() {
+                    update_send_progress(sent, total);
+                }, Qt::QueuedConnection);
+            };
+            return send_email_with_progress(email, acc, progress);
         }));
     }
 }
@@ -670,6 +1060,9 @@ void MainWindow::on_delete_mail() {
 }
 
 void MainWindow::on_restore_mail() {
+    receive_from_server(false);
+    return;
+
     int email_id = email_list_->current_email_id();
     if (email_id < 0) {
         status_label_->setText(QStringLiteral("请先在邮件列表中选择一封邮件"));
@@ -711,6 +1104,7 @@ void MainWindow::on_toggle_multi_select() {
 
     if (active) {
         btn_multi_select_->setText(QStringLiteral("完成"));
+        applyToolbarIcon(btn_multi_select_, QStringLiteral("done"), QColor("#FFFFFF"));
         UiStyle::applyPrimaryButton(btn_multi_select_, 88);
         batch_bar_->setVisible(true);
         // 根据当前文件夹调整批量按钮显示
@@ -718,6 +1112,7 @@ void MainWindow::on_toggle_multi_select() {
         status_label_->setText(QStringLiteral("多选模式 — 点击邮件勾选，使用底部按钮批量操作"));
     } else {
         btn_multi_select_->setText(QStringLiteral("多选"));
+        applyToolbarIcon(btn_multi_select_, QStringLiteral("multi"), QColor("#53657A"));
         UiStyle::applySecondaryButton(btn_multi_select_, 88);
         batch_bar_->setVisible(false);
         status_label_->setText(QStringLiteral("就绪"));
@@ -728,16 +1123,27 @@ void MainWindow::update_batch_buttons() {
     // 废纸篓：显示"批量恢复"；其他文件夹仅显示"批量删除"
     bool is_trash = (current_folder_ == "trash");
     btn_batch_restore_->setVisible(is_trash);
+    btn_batch_mark_read_->setVisible(!is_trash);
     // 废纸篓中"批量删除"变成"彻底删除"
     btn_batch_delete_->setText(is_trash ? QStringLiteral("彻底删除") : QStringLiteral("批量删除"));
+    on_selection_changed();
 }
 
 void MainWindow::on_selection_changed() {
     int count = email_list_->selected_count();
     batch_count_label_->setText(QStringLiteral("已选择 %1 封邮件").arg(count));
+    btn_batch_select_all_->setText(email_list_->all_selected()
+        ? QStringLiteral("取消全选")
+        : QStringLiteral("全选"));
     bool has_selection = (count > 0);
     btn_batch_delete_->setEnabled(has_selection);
     btn_batch_restore_->setEnabled(has_selection);
+    btn_batch_mark_read_->setEnabled(has_selection);
+}
+
+void MainWindow::on_batch_select_all() {
+    if (!email_list_->is_multi_select_mode()) return;
+    email_list_->set_all_checked(!email_list_->all_selected());
 }
 
 void MainWindow::on_batch_delete() {
@@ -784,4 +1190,20 @@ void MainWindow::on_batch_restore() {
     status_label_->setText(QStringLiteral("已恢复 %1 封邮件").arg(ids.size()));
     load_emails(current_folder_);
     update_folder_counts();
+}
+
+void MainWindow::on_batch_mark_read() {
+    std::vector<int> ids = email_list_->selected_email_ids();
+    if (ids.empty()) {
+        status_label_->setText(QStringLiteral("请先勾选要标记的邮件"));
+        return;
+    }
+    for (int id : ids) {
+        db_mgr_->mark_read(id);
+    }
+    email_list_->mark_emails_read(ids);
+    email_list_->set_all_checked(false);
+    update_folder_counts();
+    status_label_->setText(QStringLiteral("已标为已读 %1 封邮件").arg(ids.size()));
+    update_batch_buttons();
 }

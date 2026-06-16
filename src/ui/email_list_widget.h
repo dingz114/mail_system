@@ -23,9 +23,12 @@ public:
     bool is_multi_select_mode() const;
     std::vector<int> selected_email_ids() const;
     int  selected_count() const;
+    bool all_selected() const;
+    void set_all_checked(bool checked);
 
     // 标记单封邮件为已读（更新内存中的状态）
     void mark_email_read(int email_id);
+    void mark_emails_read(const std::vector<int>& email_ids);
 
 signals:
     void email_selected(int email_id);

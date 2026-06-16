@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <unordered_set>
+#include <functional>
 
 class Pop3Client {
 public:
@@ -15,7 +17,8 @@ public:
     // Full receive: connects, authenticates, fetches new emails, disconnects
     std::vector<Email> receive_emails(const std::string& server, int port, bool use_ssl,
                                        const std::string& username, const std::string& password,
-                                       int* new_count = nullptr);
+                                       int* new_count = nullptr,
+                                       const std::unordered_set<std::string>* skip_uids = nullptr);
 
     // Low-level commands
     bool connect(const std::string& server, int port, bool use_ssl);
@@ -39,10 +42,9 @@ public:
     bool is_success() const { return last_success_; }
 
     // Set callback for progress reporting (msg_num, msg_count)
-    using ProgressCallback = void(*)(int current, int total, void* userdata);
-    void set_progress_callback(ProgressCallback cb, void* userdata) {
+    using ProgressCallback = std::function<void(int current, int total)>;
+    void set_progress_callback(ProgressCallback cb) {
         progress_cb_ = cb;
-        progress_userdata_ = userdata;
     }
 
 private:
@@ -59,7 +61,6 @@ private:
     bool connected_;
 
     ProgressCallback progress_cb_;
-    void* progress_userdata_;
 };
 
 #endif // POP3_CLIENT_H

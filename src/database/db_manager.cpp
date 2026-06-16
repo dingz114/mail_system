@@ -29,8 +29,8 @@ static std::string sql_quote(DbConnection* conn, const std::string& s) {
     return "'" + conn->escape_string(s) + "'";
 }
 
-// 过滤 4 字节 UTF-8 字符（emoji 等），防止 utf8 列写入失败
-// MySQL utf8 只支持 3 字节，utf8mb4 支持 4 字节
+// 只替换非法 UTF-8 字节；数据库文本列已迁移为 utf8mb4，合法 emoji 等
+// 4 字节字符应原样保存。
 static bool is_utf8_continuation(unsigned char b) {
     return (b & 0xC0) == 0x80;  // 10xxxxxx
 }
@@ -44,7 +44,7 @@ static std::string safe_utf8(const std::string& s) {
         if ((c & 0x80) == 0)        len = 1;     // 0xxxxxxx
         else if ((c & 0xE0) == 0xC0) len = 2;    // 110xxxxx
         else if ((c & 0xF0) == 0xE0) len = 3;    // 1110xxxx
-        else if ((c & 0xF8) == 0xF0) len = 4;    // 11110xxx (4-byte, unsupported by utf8)
+        else if ((c & 0xF8) == 0xF0) len = 4;    // 11110xxx
         else { result += '?'; ++i; continue; }    // invalid lead byte
 
         // 边界检查：确保不越界读
@@ -63,28 +63,12 @@ static std::string safe_utf8(const std::string& s) {
             }
         }
 
-        if (len == 4) {
-            if (valid) {
-                result += "&#x";
-                char hex[8];
-                uint32_t cp = ((c & 0x07) << 18) |
-                              ((static_cast<unsigned char>(s[i+1]) & 0x3F) << 12) |
-                              ((static_cast<unsigned char>(s[i+2]) & 0x3F) << 6) |
-                               (static_cast<unsigned char>(s[i+3]) & 0x3F);
-                snprintf(hex, sizeof(hex), "%X;", cp);
-                result += hex;
-            } else {
-                result += '?';
-            }
-            i += 4;
+        if (valid) {
+            result.append(s, i, len);
         } else {
-            if (valid) {
-                result.append(s, i, len);
-            } else {
-                result += '?';
-            }
-            i += len;
+            result += '?';
         }
+        i += len;
     }
     return result;
 }
@@ -564,6 +548,43 @@ bool DbManager::is_uid_downloaded(int account_id, const std::string& uid) {
     int count = (row && row[0]) ? std::stoi(row[0]) : 0;
     mysql_free_result(result);
     return count > 0;
+}
+
+std::unordered_set<std::string> DbManager::get_downloaded_uids(int account_id) {
+    std::unordered_set<std::string> uids;
+    std::string sql = "SELECT pop3_uid FROM sync_state WHERE account_id=" + sql_int(account_id);
+    if (!conn_->query(sql)) return uids;
+
+    MYSQL_RES* result = conn_->store_result();
+    if (!result) return uids;
+
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(result))) {
+        if (row[0] && row[0][0] != '\0') {
+            uids.insert(row[0]);
+        }
+    }
+    mysql_free_result(result);
+    return uids;
+}
+
+int DbManager::get_email_id_by_uid(int account_id, const std::string& uid) {
+    if (uid.empty()) return -1;
+
+    std::ostringstream sql;
+    sql << "SELECT email_id FROM sync_state WHERE account_id=" << sql_int(account_id)
+        << " AND pop3_uid=" << sql_quote(conn_, uid)
+        << " LIMIT 1";
+
+    if (!conn_->query(sql.str())) return -1;
+
+    MYSQL_RES* result = conn_->store_result();
+    if (!result) return -1;
+
+    MYSQL_ROW row = mysql_fetch_row(result);
+    int email_id = (row && row[0]) ? std::stoi(row[0]) : -1;
+    mysql_free_result(result);
+    return email_id;
 }
 
 bool DbManager::mark_uid_downloaded(int account_id, const std::string& uid, int email_id) {

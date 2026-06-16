@@ -3,11 +3,14 @@
 
 #include "ssl_socket.h"
 #include "../core/email.h"
+#include <functional>
 #include <string>
 #include <vector>
 
 class SmtpClient {
 public:
+    using ProgressCallback = std::function<void(size_t sent, size_t total)>;
+
     SmtpClient();
     ~SmtpClient();
 
@@ -15,7 +18,8 @@ public:
     // Returns true on success, false on failure. Check get_last_error() for details.
     bool send_email(const Email& email,
                     const std::string& smtp_server, int port, bool use_ssl,
-                    const std::string& username, const std::string& password);
+                    const std::string& username, const std::string& password,
+                    ProgressCallback progress = nullptr);
 
     // Connect, negotiate TLS when needed, and verify username/password.
     bool test_login(const std::string& smtp_server, int port, bool use_ssl,
@@ -29,7 +33,8 @@ public:
     bool mail_from(const std::string& sender);
     bool rcpt_to(const std::string& recipient);
     bool data_begin();                 // Send DATA command, wait for 354
-    bool data_send(const std::string& mime_message); // Send MIME content
+    bool data_send(const std::string& mime_message,
+                   ProgressCallback progress = nullptr); // Send MIME content
     bool data_end();                   // Send \r\n.\r\n and wait for 250
     void quit();
 

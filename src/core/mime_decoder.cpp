@@ -7,6 +7,12 @@
 #include <cctype>
 #include <cstdio>
 #include <ctime>
+#include <QByteArray>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QString>
 
 // 临时调试：CMake 中加 -DDEBUG_EMAIL_CONTENT 或在文件开头取消注释来启用
 // #define DEBUG_EMAIL_CONTENT
@@ -24,6 +30,15 @@
 namespace {
 
 // 将附件内容写入文件，返回文件路径，失败返回空字符串
+std::string to_utf8(const QString& text) {
+    QByteArray bytes = text.toUtf8();
+    return std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+}
+
+QString from_utf8(const std::string& text) {
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+}
+
 std::string save_attachment_file(const std::string& save_dir,
                                   const std::string& filename,
                                   const std::string& data) {
@@ -31,26 +46,33 @@ std::string save_attachment_file(const std::string& save_dir,
 
     // 生成唯一文件名：时间戳_序号_原始文件名
     static int seq = 0;
-    char buf[64];
-    auto now = std::time(nullptr);
-    std::strftime(buf, sizeof(buf), "%Y%m%d%H%M%S", std::localtime(&now));
-    std::string safe_name = std::string(buf) + "_" + std::to_string(++seq) + "_" + filename;
-
-    // 确保文件名安全：替换路径分隔符
-    for (auto& ch : safe_name) {
-        if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+    QDir dir(from_utf8(save_dir));
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        return "";
     }
 
-    std::string full_path = save_dir;
-    if (!full_path.empty() && full_path.back() != '/' && full_path.back() != '\\')
-        full_path += '/';
-    full_path += safe_name;
+    QString safe_name = QFileInfo(from_utf8(filename).trimmed()).fileName();
+    if (safe_name.isEmpty()) safe_name = QStringLiteral("attachment.bin");
+    safe_name.replace('/', '_');
+    safe_name.replace('\\', '_');
+    safe_name.replace(':', '_');
 
-    std::ofstream out(full_path, std::ios::binary);
-    if (!out) return "";
-    out.write(data.data(), data.size());
+    QString full_path = dir.filePath(QStringLiteral("%1_%2_%3")
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(++seq)
+        .arg(safe_name));
+
+    // 确保文件名安全：替换路径分隔符
+    QFile out(full_path);
+    if (!out.open(QIODevice::WriteOnly)) return "";
+    QByteArray bytes(data.data(), static_cast<int>(data.size()));
+    if (out.write(bytes) != bytes.size()) {
+        out.close();
+        QFile::remove(full_path);
+        return "";
+    }
     out.close();
-    return full_path;
+    return to_utf8(full_path);
 }
 
 std::string trim_copy(const std::string& value) {
@@ -64,6 +86,124 @@ std::string lower_copy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+std::string percent_decode_bytes(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '%' && i + 2 < value.size() &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 2]))) {
+            auto hex = [](char c) {
+                if (c >= '0' && c <= '9') return c - '0';
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return c - 'a' + 10;
+            };
+            out += static_cast<char>((hex(value[i + 1]) << 4) | hex(value[i + 2]));
+            i += 2;
+        } else {
+            out += value[i];
+        }
+    }
+    return out;
+}
+
+std::map<std::string, std::string> parse_header_params(const std::string& header_value,
+                                                        std::string* main_value = nullptr) {
+    std::map<std::string, std::string> params;
+    bool in_quotes = false;
+    bool escaped = false;
+    size_t semi = std::string::npos;
+    for (size_t i = 0; i < header_value.size(); ++i) {
+        char ch = header_value[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\' && in_quotes) {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+            continue;
+        }
+        if (ch == ';' && !in_quotes) {
+            semi = i;
+            break;
+        }
+    }
+
+    if (main_value) {
+        *main_value = trim_copy(semi == std::string::npos ? header_value
+                                                          : header_value.substr(0, semi));
+    }
+    if (semi == std::string::npos) return params;
+
+    std::vector<std::string> param_list;
+    std::string current;
+    in_quotes = false;
+    escaped = false;
+    for (size_t i = semi + 1; i < header_value.size(); ++i) {
+        char ch = header_value[i];
+        if (escaped) {
+            current += ch;
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\' && in_quotes) {
+            escaped = true;
+            current += ch;
+            continue;
+        }
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+            current += ch;
+            continue;
+        }
+        if (ch == ';' && !in_quotes) {
+            param_list.push_back(current);
+            current.clear();
+            continue;
+        }
+        current += ch;
+    }
+    param_list.push_back(current);
+
+    for (const std::string& param : param_list) {
+        size_t eq = param.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = lower_copy(trim_copy(param.substr(0, eq)));
+        std::string value = trim_copy(param.substr(eq + 1));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+
+        bool encoded = false;
+        if (!key.empty() && key.back() == '*') {
+            key.pop_back();
+            encoded = true;
+        }
+        size_t section = key.find('*');
+        if (section != std::string::npos) {
+            key = key.substr(0, section);
+            encoded = true;
+        }
+        if (encoded) {
+            size_t p1 = value.find('\'');
+            size_t p2 = p1 == std::string::npos ? std::string::npos : value.find('\'', p1 + 1);
+            if (p1 != std::string::npos && p2 != std::string::npos) {
+                value = value.substr(p2 + 1);
+            }
+            value = percent_decode_bytes(value);
+        }
+        if (!key.empty() && !params.count(key)) {
+            params[key] = value;
+        }
+    }
+    return params;
 }
 
 bool split_header_body(const std::string& text,
@@ -411,45 +551,31 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
         }
         if (headers.count("content-disposition")) {
             content_disposition = headers["content-disposition"];
-                // Extract filename
-                size_t fname = content_disposition.find("filename=");
-                if (fname != std::string::npos) {
-                    size_t fstart = fname + 9;
-                    if (fstart < content_disposition.size()) {
-                        char quote = content_disposition[fstart];
-                        if (quote == '"') {
-                            size_t fend = content_disposition.find('"', fstart + 1);
-                            if (fend != std::string::npos) {
-                                attachment_filename = content_disposition.substr(fstart + 1, fend - fstart - 1);
-                            }
-                        } else {
-                            attachment_filename = content_disposition.substr(fstart);
-                            size_t semi = attachment_filename.find(';');
-                            if (semi != std::string::npos) attachment_filename = attachment_filename.substr(0, semi);
-                        }
-                        attachment_filename = decode_rfc2047(attachment_filename);
-                    }
-                }
-                // Extract name from Content-Type if not in Content-Disposition
-                if (attachment_filename.empty() && params.count("name")) {
-                    attachment_filename = decode_rfc2047(params["name"]);
-                }
+            auto disp_params = parse_header_params(content_disposition);
+            if (disp_params.count("filename")) {
+                attachment_filename = decode_rfc2047(disp_params["filename"]);
+            }
+        }
+        if (attachment_filename.empty() && params.count("name")) {
+            attachment_filename = decode_rfc2047(params["name"]);
         }
         if (headers.count("content-id")) {
             content_id = headers["content-id"];
         }
 
         // Decode body
-        std::string decoded_body = decode_transfer_encoding(part_body, transfer_encoding);
+        std::string decoded_raw_body = decode_transfer_encoding(part_body, transfer_encoding);
         std::string charset = params.count("charset") ? params["charset"] : "utf-8";
-        decoded_body = convert_to_utf8(decoded_body, charset);
+        std::string decoded_text_body = convert_to_utf8(decoded_raw_body, charset);
 
         // Determine what to do with this part
         std::string lower_disposition = content_disposition;
         std::transform(lower_disposition.begin(), lower_disposition.end(),
                      lower_disposition.begin(), ::tolower);
 
-        bool is_attachment = (lower_disposition.find("attachment") != std::string::npos);
+        bool has_filename = !attachment_filename.empty();
+        bool is_attachment = (lower_disposition.find("attachment") != std::string::npos) ||
+                             (has_filename && lower_disposition.find("inline") == std::string::npos);
 
         if (is_attachment || media_type.find("image/") == 0 ||
             media_type.find("application/") == 0 ||
@@ -460,25 +586,34 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
                       << " is_attachment=" << is_attachment
                       << " filename=" << attachment_filename
                       << " raw_body_size=" << part_body.size()
-                      << " decoded_size=" << decoded_body.size()
+                      << " decoded_size=" << decoded_raw_body.size()
                       << " first50=" << part_body.substr(0, 50) << std::endl);
         }
 
         if (is_attachment) {
             Attachment att;
             att.file_name = attachment_filename;
-            att.file_path = save_attachment_file(save_dir, attachment_filename, decoded_body);
-            att.file_size = decoded_body.size();
+            att.file_path = save_attachment_file(save_dir, attachment_filename, decoded_raw_body);
+            att.file_size = decoded_raw_body.size();
+            att.mime_type = media_type;
+            att.content_id = content_id;
+            email.attachments.push_back(att);
+            email.has_attachments = true;
+        } else if (has_filename && media_type != "text/plain" && media_type != "text/html") {
+            Attachment att;
+            att.file_name = attachment_filename;
+            att.file_path = save_attachment_file(save_dir, attachment_filename, decoded_raw_body);
+            att.file_size = decoded_raw_body.size();
             att.mime_type = media_type;
             att.content_id = content_id;
             email.attachments.push_back(att);
             email.has_attachments = true;
         } else if (media_type == "text/plain") {
             if (email.body_plain.empty()) {
-                email.body_plain = decoded_body;
+                email.body_plain = decoded_text_body;
             }
         } else if (media_type == "text/html") {
-            email.body_html = decoded_body;
+            email.body_html = decoded_text_body;
         } else if (media_type.find("multipart/") == 0 && params.count("boundary")) {
             // Nested multipart
             parse_multipart(part_body, params["boundary"], email, save_dir);
@@ -487,8 +622,8 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
             // Inline media — save and treat as attachment
             Attachment att;
             att.file_name = attachment_filename.empty() ? "attachment" : attachment_filename;
-            att.file_path = save_attachment_file(save_dir, att.file_name, decoded_body);
-            att.file_size = decoded_body.size();
+            att.file_path = save_attachment_file(save_dir, att.file_name, decoded_raw_body);
+            att.file_size = decoded_raw_body.size();
             att.mime_type = media_type;
             att.content_id = content_id;
             email.attachments.push_back(att);
@@ -496,7 +631,7 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
         } else {
             // Default: use as body if plain text seems suitable
             if (email.body_plain.empty()) {
-                email.body_plain += decoded_body;
+                email.body_plain += decoded_text_body;
             }
         }
     }
@@ -505,6 +640,7 @@ void MimeDecoder::parse_multipart(const std::string& body, const std::string& bo
 std::string MimeDecoder::decode_rfc2047(const std::string& encoded) const {
     std::string result;
     size_t pos = 0;
+    bool previous_was_encoded_word = false;
 
     while (pos < encoded.size()) {
         size_t start = encoded.find("=?", pos);
@@ -513,44 +649,44 @@ std::string MimeDecoder::decode_rfc2047(const std::string& encoded) const {
             break;
         }
 
-        // Copy text before encoded word
-        result += encoded.substr(pos, start - pos);
-
-        // Find the end
-        size_t end = encoded.find("?=", start + 2);
-        if (end == std::string::npos) {
-            result += encoded.substr(start);
-            break;
-        }
-
         // Parse: =?charset?encoding?text?=
-        std::string word = encoded.substr(start + 2, end - start - 2);
-        size_t q1 = word.find('?');
-        size_t q2 = word.find('?', q1 + 1);
+        size_t q1 = encoded.find('?', start + 2);
+        size_t q2 = q1 == std::string::npos ? std::string::npos : encoded.find('?', q1 + 1);
+        size_t end = q2 == std::string::npos ? std::string::npos : encoded.find("?=", q2 + 1);
 
-        if (q1 != std::string::npos && q2 != std::string::npos) {
-            std::string charset = word.substr(0, q1);
-            std::string encoding = word.substr(q1 + 1, q2 - q1 - 1);
-            std::string text = word.substr(q2 + 1);
-
-            std::string decoded;
-            if (encoding == "B" || encoding == "b") {
-                decoded = Base64::decode(text);
-            } else if (encoding == "Q" || encoding == "q") {
-                decoded = decode_quoted_printable(text);
-                // Replace underscores with spaces (Q encoding)
-                std::replace(decoded.begin(), decoded.end(), '_', ' ');
-            } else {
-                decoded = text;
-            }
-
-            // Convert charset
-            decoded = convert_to_utf8(decoded, charset);
-            result += decoded;
-        } else {
-            result += encoded.substr(start, end - start + 2);
+        if (q1 == std::string::npos || q2 == std::string::npos || end == std::string::npos) {
+            result += encoded.substr(pos, start - pos + 2);
+            pos = start + 2;
+            previous_was_encoded_word = false;
+            continue;
         }
 
+        std::string between = encoded.substr(pos, start - pos);
+        const bool only_linear_whitespace =
+            between.find_first_not_of(" \t\r\n") == std::string::npos;
+        if (!previous_was_encoded_word || !only_linear_whitespace) {
+            result += between;
+        }
+
+        std::string charset = encoded.substr(start + 2, q1 - start - 2);
+        std::string encoding = encoded.substr(q1 + 1, q2 - q1 - 1);
+        std::string text = encoded.substr(q2 + 1, end - q2 - 1);
+
+        std::string decoded;
+        if (encoding == "B" || encoding == "b") {
+            decoded = Base64::decode(text);
+        } else if (encoding == "Q" || encoding == "q") {
+            // RFC 2047 Q encoding uses "_" for literal spaces before
+            // quoted-printable hex decoding is applied.
+            std::replace(text.begin(), text.end(), '_', ' ');
+            decoded = decode_quoted_printable(text);
+        } else {
+            decoded = text;
+        }
+
+        decoded = convert_to_utf8(decoded, charset);
+        result += decoded;
+        previous_was_encoded_word = true;
         pos = end + 2;
     }
 
@@ -580,7 +716,24 @@ std::string MimeDecoder::decode_quoted_printable(const std::string& text) const 
     result.reserve(text.size());
 
     for (size_t i = 0; i < text.size(); ++i) {
-        if (text[i] == '=' && i + 2 < text.size()) {
+        if (text[i] == '=') {
+            if (i + 1 < text.size() && text[i + 1] == '\n') {
+                ++i;
+                continue;
+            }
+            if (i + 1 < text.size() && text[i + 1] == '\r') {
+                if (i + 2 < text.size() && text[i + 2] == '\n') {
+                    i += 2;
+                } else {
+                    ++i;
+                }
+                continue;
+            }
+            if (i + 2 >= text.size()) {
+                result += text[i];
+                continue;
+            }
+
             // Check if it's a hex sequence
             char c1 = text[i + 1];
             char c2 = text[i + 2];
@@ -589,10 +742,6 @@ std::string MimeDecoder::decode_quoted_printable(const std::string& text) const 
                 int hi = std::isdigit(static_cast<unsigned char>(c1)) ? (c1 - '0') : (std::toupper(c1) - 'A' + 10);
                 int lo = std::isdigit(static_cast<unsigned char>(c2)) ? (c2 - '0') : (std::toupper(c2) - 'A' + 10);
                 result += static_cast<char>((hi << 4) | lo);
-                i += 2;
-                continue;
-            } else if (c1 == '\r' && c2 == '\n') {
-                // Soft line break — skip
                 i += 2;
                 continue;
             }

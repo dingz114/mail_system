@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstring>
 #include <chrono>
+#include <vector>
 
 #ifdef _WIN32
 static bool winsock_initialized = false;
@@ -187,12 +188,21 @@ void TcpSocket::close() {
 
 std::string TcpSocket::get_last_error_string() const {
 #ifdef _WIN32
-    char* s = nullptr;
-    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   nullptr, last_error_, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&s, 0, nullptr);
-    std::string result(s ? s : "Unknown error");
-    if (s) LocalFree(s);
-    return result;
+    wchar_t* s = nullptr;
+    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   nullptr, last_error_, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   reinterpret_cast<LPWSTR>(&s), 0, nullptr);
+    if (!s) return "Unknown error";
+
+    int len = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+    std::string result;
+    if (len > 0) {
+        std::vector<char> buf(static_cast<size_t>(len));
+        WideCharToMultiByte(CP_UTF8, 0, s, -1, buf.data(), len, nullptr, nullptr);
+        result = buf.data();
+    }
+    LocalFree(s);
+    return result.empty() ? "Unknown error" : result;
 #else
     return std::string(strerror(last_error_));
 #endif

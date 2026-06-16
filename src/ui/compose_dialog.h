@@ -4,9 +4,9 @@
 #include <QDialog>
 #include <QLineEdit>
 #include <QTextEdit>
-#include <QListWidget>
 #include <QPushButton>
 #include <QComboBox>
+#include <QVBoxLayout>
 #include "../core/email.h"
 #include "../database/db_manager.h"
 
@@ -28,19 +28,22 @@ private slots:
     void on_send();
     void on_save_draft();
     void on_attach();
-    void on_remove_attachment();
 
 private:
+    void rebuild_attachment_panel();
+
     DbManager* db_mgr_;
     int account_id_;
 
     QComboBox*  from_combo_;
     QLineEdit*  to_edit_;
+    QWidget*    cc_row_;
     QLineEdit*  cc_edit_;
     QLineEdit*  bcc_edit_;
     QLineEdit*  subject_edit_;
     QTextEdit*  body_edit_;
-    QListWidget* attach_list_;
+    QWidget*     attach_panel_;
+    QVBoxLayout* attach_layout_;
     QPushButton* send_btn_;
     QPushButton* draft_btn_;
     QPushButton* attach_btn_;

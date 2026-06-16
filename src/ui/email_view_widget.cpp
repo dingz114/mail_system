@@ -1,4 +1,6 @@
 #include "email_view_widget.h"
+#include "remote_image_text_browser.h"
+#include "../core/mime_decoder.h"
 #include <QDir>
 #include <QFileDialog>
 #include <QFile>
@@ -10,6 +12,7 @@
 #include <QDesktopServices>
 #include <QHash>
 #include <QRegularExpression>
+#include <QTextDocument>
 #include <QUrl>
 #include <functional>
 
@@ -41,6 +44,51 @@ QString normalize_cid(QString cid) {
     return cid;
 }
 
+QString cleanup_legacy_quoted_printable(QString html) {
+    // Older saved messages may still contain quoted-printable soft breaks
+    // after POP3 line endings were normalized. Remove the replacement marks
+    // created from bytes split at those soft breaks as well.
+    html.replace(QStringLiteral("?\r\n?"), QString());
+    html.replace(QStringLiteral("?\n?"), QString());
+    html.replace(QStringLiteral("=\r\n"), QString());
+    html.replace(QStringLiteral("=\n"), QString());
+
+    html.replace(QStringLiteral("http://www.w3.org"), QStringLiteral("https://www.w3.org"));
+    return html;
+}
+
+QString html_entities_to_text(QString text) {
+    text.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+    text.replace(QStringLiteral("&lt;"), QStringLiteral("<"));
+    text.replace(QStringLiteral("&gt;"), QStringLiteral(">"));
+    text.replace(QStringLiteral("&quot;"), QStringLiteral("\""));
+    text.replace(QStringLiteral("&apos;"), QStringLiteral("'"));
+
+    QRegularExpression entity_re(QStringLiteral("&#(x[0-9A-Fa-f]+|[0-9]+);"));
+    return replace_regex(text, entity_re, [](const QRegularExpressionMatch& match) {
+        QString raw = match.captured(1);
+        bool ok = false;
+        uint codepoint = 0;
+        if (raw.startsWith(QLatin1Char('x'), Qt::CaseInsensitive)) {
+            codepoint = raw.mid(1).toUInt(&ok, 16);
+        } else {
+            codepoint = raw.toUInt(&ok, 10);
+        }
+        if (!ok || codepoint > 0x10FFFF) {
+            return match.captured(0);
+        }
+        char32_t cp = static_cast<char32_t>(codepoint);
+        return QString::fromUcs4(&cp, 1);
+    });
+}
+
+QString decode_header_text(const std::string& value, const QString& fallback) {
+    if (value.empty()) return fallback;
+    MimeDecoder decoder;
+    QString text = QString::fromStdString(decoder.decode_rfc2047(value));
+    return html_entities_to_text(text);
+}
+
 QString add_image_constraints(QString html) {
     if (!html.contains(QStringLiteral("<style"), Qt::CaseInsensitive)) {
         html.prepend(QStringLiteral(
@@ -70,12 +118,15 @@ QString add_image_constraints(QString html) {
         } else {
             attrs += QStringLiteral(" style=\"max-width:100%; height:auto;\"");
         }
+        attrs.replace(QStringLiteral("http://"), QStringLiteral("https://"),
+                      Qt::CaseInsensitive);
         return QStringLiteral("<img%1>").arg(attrs);
     });
 }
 
 QString prepare_html_body(const Email& email) {
     QString html = QString::fromStdString(email.body_html);
+    html = cleanup_legacy_quoted_printable(html);
     QHash<QString, QString> cid_to_file;
 
     for (const auto& att : email.attachments) {
@@ -104,7 +155,13 @@ QString prepare_html_body(const Email& email) {
         return match.captured(1) + match.captured(2) + it.value() + match.captured(2);
     });
 
-    return add_image_constraints(html);
+    html = add_image_constraints(html);
+    if (!html.contains(QStringLiteral("<html"), Qt::CaseInsensitive)) {
+        html = QStringLiteral("<html><head><meta charset=\"utf-8\"></head><body>") +
+               html +
+               QStringLiteral("</body></html>");
+    }
+    return html;
 }
 }
 
@@ -136,7 +193,7 @@ EmailViewWidget::EmailViewWidget(QWidget* parent) : QWidget(parent) {
     il->addWidget(header_label_);
 
     // 正文
-    body_browser_ = new QTextBrowser(this);
+    body_browser_ = new RemoteImageTextBrowser(this);
     body_browser_->setOpenExternalLinks(true);
     body_browser_->setReadOnly(true);
     body_browser_->setStyleSheet(
@@ -167,12 +224,13 @@ void EmailViewWidget::show_email(const Email& email) {
     QString html;
     html += "<table style='width:100%; border-collapse:collapse;'>";
     html += "<tr><td colspan='2' style='font-size:22px; font-weight:700; color:#111827; padding-bottom:18px; line-height:1.4;'>"
-            + esc(email.subject.empty() ? "(无主题)" : email.subject) + "</td></tr>";
+            + decode_header_text(email.subject, QStringLiteral("(无主题)")).toHtmlEscaped() + "</td></tr>";
 
     // 发件人
     QString from = email.sender_name.empty()
         ? QString::fromStdString(email.sender_addr)
-        : QString::fromStdString(email.sender_name + " <" + email.sender_addr + ">");
+        : decode_header_text(email.sender_name, QString()) + QStringLiteral(" <") +
+              QString::fromStdString(email.sender_addr) + QStringLiteral(">");
     html += QStringLiteral("<tr><td style='width:56px; color:#6B7280; padding:4px 0; vertical-align:top; white-space:nowrap;'>发件人</td>"
                            "<td style='color:#111827; padding:4px 0; vertical-align:top;'>%1</td></tr>").arg(from.toHtmlEscaped());
 
@@ -270,6 +328,10 @@ void EmailViewWidget::show_email(const Email& email) {
                     "QPushButton { background: #F3F4F6; color: #9CA3AF; border: none;"
                     "border-radius: 4px; padding: 6px 14px; font-size: 12px; }");
                 dl->setText(QStringLiteral("不可用"));
+                dl->setToolTip(src_path.isEmpty()
+                    ? QStringLiteral("这条附件记录没有保存本地文件路径，常见于旧邮件或发送箱副本。")
+                    : QStringLiteral("本地附件文件已不存在：%1").arg(src_path));
+                nm->setToolTip(dl->toolTip());
             }
             cl->addWidget(dl);
 

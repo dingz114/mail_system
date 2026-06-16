@@ -6,6 +6,9 @@
 #include <ctime>
 #include <cstdlib>
 #include <random>
+#include <QFile>
+#include <QFileInfo>
+#include <QString>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -231,17 +234,16 @@ std::string MimeEncoder::format_date() const {
 }
 
 std::string MimeEncoder::encode_attachment(const Attachment& att) const {
-    // Read file and Base64 encode
-    std::ifstream file(att.file_path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return "";
+    // QFile handles Unicode Windows paths correctly; std::ifstream with a
+    // narrow UTF-8 path may fail for Chinese filenames.
+    QFile file(QString::fromStdString(att.file_path));
+    if (!file.open(QIODevice::ReadOnly)) return "";
 
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
+    QByteArray bytes = file.readAll();
+    if (bytes.isEmpty() && file.size() > 0) return "";
 
-    std::vector<char> buffer(size);
-    if (!file.read(buffer.data(), size)) return "";
-
-    return Base64::encode(reinterpret_cast<const unsigned char*>(buffer.data()), size);
+    return Base64::encode(reinterpret_cast<const unsigned char*>(bytes.constData()),
+                          static_cast<size_t>(bytes.size()));
 }
 
 std::string MimeEncoder::build_attachment_part(const Attachment& att, const std::string& boundary) const {
@@ -254,9 +256,20 @@ std::string MimeEncoder::build_attachment_part(const Attachment& att, const std:
         mime_type = "application/octet-stream";
     }
 
+    long long file_size = att.file_size;
+    QString file_path = QString::fromStdString(att.file_path);
+    QFileInfo file_info(file_path);
+    if (file_info.exists() && file_info.isFile()) {
+        file_size = file_info.size();
+    }
+
     oss << "Content-Type: " << mime_type << "; name=\"" << encode_header(att.file_name) << "\"\r\n";
     oss << "Content-Transfer-Encoding: base64\r\n";
-    oss << "Content-Disposition: attachment; filename=\"" << encode_header(att.file_name) << "\"\r\n";
+    oss << "Content-Disposition: attachment; filename=\"" << encode_header(att.file_name) << "\"";
+    if (file_size > 0) {
+        oss << "; size=" << file_size;
+    }
+    oss << "\r\n";
     if (!att.content_id.empty()) {
         oss << "Content-ID: <" << att.content_id << ">\r\n";
     }

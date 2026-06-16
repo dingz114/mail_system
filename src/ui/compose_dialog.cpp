@@ -10,6 +10,27 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QSplitter>
+#include <QFrame>
+#include <QFontMetrics>
+#include <QByteArray>
+
+namespace {
+std::string to_utf8(const QString& text) {
+    QByteArray bytes = text.toUtf8();
+    return std::string(bytes.constData(), static_cast<size_t>(bytes.size()));
+}
+
+QString from_utf8(const std::string& text) {
+    return QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+}
+
+QString format_size(long long bytes) {
+    if (bytes >= 1024 * 1024) {
+        return QString::number(bytes / (1024.0 * 1024.0), 'f', 1) + QStringLiteral(" MB");
+    }
+    return QString::number(bytes / 1024.0, 'f', 0) + QStringLiteral(" KB");
+}
+}
 
 ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     : QDialog(parent), db_mgr_(db_mgr), account_id_(account_id), draft_id_(-1) {
@@ -26,6 +47,7 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
         "border-radius: 0; padding: 9px 0; font-size: 14px; background: transparent; }"
         "QLineEdit:focus { border-bottom: 2px solid #2563EB; }");
     auto label_style = QStringLiteral("font-weight: 600; min-width: 64px; color: #4B5563;");
+    auto row_spacing = 14;
 
     // --- 发件人 ---
     QHBoxLayout* from_layout = new QHBoxLayout();
@@ -55,6 +77,7 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
 
     // --- 收件人 ---
     QHBoxLayout* to_layout = new QHBoxLayout();
+    to_layout->setSpacing(row_spacing);
     QLabel* to_label = new QLabel(QStringLiteral("收件人"), this);
     to_label->setStyleSheet(label_style);
     to_label->setFixedWidth(64);
@@ -69,24 +92,29 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     cc_btn->setFlat(true);
     UiStyle::applyGhostButton(cc_btn, 54);
     connect(cc_btn, &QPushButton::clicked, [this]() {
-        cc_edit_->setVisible(!cc_edit_->isVisible());
+        const bool show = !cc_row_->isVisible();
+        cc_row_->setVisible(show);
+        if (show) cc_edit_->setFocus();
     });
     to_layout->addWidget(cc_btn);
     main_layout->addLayout(to_layout);
 
     // --- 抄送 ---
-    QHBoxLayout* cc_layout = new QHBoxLayout();
-    QLabel* cc_label = new QLabel(QStringLiteral("抄送"), this);
+    cc_row_ = new QWidget(this);
+    cc_row_->setVisible(false);
+    QHBoxLayout* cc_layout = new QHBoxLayout(cc_row_);
+    cc_layout->setContentsMargins(0, 0, 0, 0);
+    cc_layout->setSpacing(row_spacing);
+    QLabel* cc_label = new QLabel(QStringLiteral("抄送"), cc_row_);
     cc_label->setStyleSheet(label_style);
     cc_label->setFixedWidth(64);
     cc_layout->addWidget(cc_label);
 
-    cc_edit_ = new QLineEdit(this);
-    cc_edit_->setPlaceholderText(QStringLiteral("抄送邮箱地址"));
+    cc_edit_ = new QLineEdit(cc_row_);
+    cc_edit_->setPlaceholderText(QStringLiteral("抄送邮箱地址，多人用分号 ; 分隔"));
     cc_edit_->setStyleSheet(to_edit_->styleSheet());
-    cc_edit_->setVisible(false);
     cc_layout->addWidget(cc_edit_, 1);
-    main_layout->addLayout(cc_layout);
+    main_layout->addWidget(cc_row_);
 
     // --- 主题 ---
     QHBoxLayout* subj_layout = new QHBoxLayout();
@@ -127,13 +155,15 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     bottom_bar->addWidget(attach_btn_);
 
     // 附件预览
-    attach_list_ = new QListWidget(this);
-    attach_list_->setMaximumHeight(80);
-    attach_list_->setStyleSheet(
-        "QListWidget { border: 1px solid #E5E7EB; border-radius: 6px; padding: 4px; font-size: 12px; background:#FFFFFF; }"
-        "QListWidget::item { padding: 2px 8px; }");
-    attach_list_->setVisible(false);
-    bottom_bar->addWidget(attach_list_, 1);
+    attach_panel_ = new QWidget(this);
+    attach_panel_->setObjectName("composeAttachmentPanel");
+    attach_panel_->setVisible(false);
+    attach_panel_->setStyleSheet(
+        "QWidget#composeAttachmentPanel { background: #F8FAFC; border: 1px solid #E3EAF2; border-radius: 8px; }");
+    attach_layout_ = new QVBoxLayout(attach_panel_);
+    attach_layout_->setContentsMargins(12, 10, 12, 10);
+    attach_layout_->setSpacing(8);
+    bottom_bar->addWidget(attach_panel_, 1);
 
     bottom_bar->addStretch();
 
@@ -155,12 +185,6 @@ ComposeDialog::ComposeDialog(DbManager* db_mgr, int account_id, QWidget* parent)
     main_layout->addLayout(bottom_bar);
 
     // 附件列表更新时显示/隐藏
-    connect(attach_list_->model(), &QAbstractItemModel::rowsInserted, [this]() {
-        attach_list_->setVisible(attach_list_->count() > 0);
-    });
-    connect(attach_list_->model(), &QAbstractItemModel::rowsRemoved, [this]() {
-        attach_list_->setVisible(attach_list_->count() > 0);
-    });
 }
 
 void ComposeDialog::set_reply_mode(const Email& original_email, bool reply_all) {
@@ -169,7 +193,7 @@ void ComposeDialog::set_reply_mode(const Email& original_email, bool reply_all) 
     if (reply_all) {
         to_edit_->setText(QString::fromStdString(Email::join_recipients(original_email.to)));
         cc_edit_->setText(QString::fromStdString(Email::join_recipients(original_email.cc)));
-        cc_edit_->setVisible(true);
+        cc_row_->setVisible(!cc_edit_->text().trimmed().isEmpty());
     } else {
         if (!original_email.sender_name.empty()) {
             to_edit_->setText(QString::fromStdString(original_email.sender_name +
@@ -219,8 +243,11 @@ void ComposeDialog::load_draft(const Email& draft) {
     draft_id_ = draft.id;
     to_edit_->setText(QString::fromStdString(Email::join_recipients(draft.to)));
     cc_edit_->setText(QString::fromStdString(Email::join_recipients(draft.cc)));
+    cc_row_->setVisible(!cc_edit_->text().trimmed().isEmpty());
     subject_edit_->setText(QString::fromStdString(draft.subject));
     body_edit_->setPlainText(QString::fromStdString(draft.body_plain));
+    attachments_ = draft.attachments;
+    rebuild_attachment_panel();
     setWindowTitle(QStringLiteral("编辑草稿"));
 }
 
@@ -247,6 +274,14 @@ void ComposeDialog::on_send() {
         QMessageBox::warning(this, QStringLiteral("提示"),
                              QStringLiteral("请填写收件人邮箱地址。"));
         return;
+    }
+    for (const auto& att : attachments_) {
+        QString path = from_utf8(att.file_path);
+        if (path.isEmpty() || !QFileInfo::exists(path)) {
+            QMessageBox::warning(this, QStringLiteral("附件不可用"),
+                                 QStringLiteral("附件文件不存在或无法访问：\n%1").arg(path));
+            return;
+        }
     }
     accept();
 }
@@ -276,8 +311,8 @@ void ComposeDialog::on_attach() {
 
     QFileInfo fi(file_path);
     Attachment att;
-    att.file_name = fi.fileName().toStdString();
-    att.file_path = file_path.toStdString();
+    att.file_name = to_utf8(fi.fileName());
+    att.file_path = to_utf8(file_path);
     att.file_size = fi.size();
 
     QString suffix = fi.suffix().toLower();
@@ -292,19 +327,72 @@ void ComposeDialog::on_attach() {
     else att.mime_type = "application/octet-stream";
 
     attachments_.push_back(att);
-    QString size_text;
-    if (att.file_size > 1024 * 1024)
-        size_text = QString::number(att.file_size / (1024.0 * 1024.0), 'f', 1) + " MB";
-    else
-        size_text = QString::number(att.file_size / 1024.0, 'f', 0) + " KB";
-
-    attach_list_->addItem(QString::fromStdString(att.file_name) + "  (" + size_text + ")");
+    rebuild_attachment_panel();
 }
 
-void ComposeDialog::on_remove_attachment() {
-    int row = attach_list_->currentRow();
-    if (row >= 0 && row < (int)attachments_.size()) {
-        attachments_.erase(attachments_.begin() + row);
-        delete attach_list_->takeItem(row);
+void ComposeDialog::rebuild_attachment_panel() {
+    if (!attach_layout_ || !attach_panel_) return;
+
+    QLayoutItem* item = nullptr;
+    while ((item = attach_layout_->takeAt(0))) {
+        delete item->widget();
+        delete item;
+    }
+
+    attach_panel_->setVisible(!attachments_.empty());
+    if (attachments_.empty()) return;
+
+    QLabel* header = new QLabel(QStringLiteral("附件（%1 个）").arg(attachments_.size()), attach_panel_);
+    header->setStyleSheet("color:#1F3A5F; font-weight:600; font-size:13px; background:transparent;");
+    attach_layout_->addWidget(header);
+
+    for (int i = 0; i < static_cast<int>(attachments_.size()); ++i) {
+        const Attachment& att = attachments_[static_cast<size_t>(i)];
+        QFrame* row = new QFrame(attach_panel_);
+        row->setStyleSheet(
+            "QFrame { background:#FFFFFF; border:1px solid #E5ECF4; border-radius:7px; }"
+            "QLabel { border:none; background:transparent; }");
+
+        auto* row_layout = new QVBoxLayout(row);
+        row_layout->setContentsMargins(12, 8, 12, 8);
+        row_layout->setSpacing(6);
+
+        auto* top = new QHBoxLayout();
+        top->setContentsMargins(0, 0, 0, 0);
+        top->setSpacing(10);
+
+        QString full_name = from_utf8(att.file_name);
+        QFontMetrics metrics(row->font());
+        QLabel* name = new QLabel(metrics.elidedText(full_name, Qt::ElideMiddle, 260), row);
+        name->setStyleSheet("color:#111827; font-size:13px; font-weight:500;");
+        name->setMinimumWidth(120);
+        name->setMaximumWidth(300);
+        name->setToolTip(full_name + QStringLiteral("\n") + from_utf8(att.file_path));
+        top->addWidget(name, 1);
+
+        QLabel* size = new QLabel(format_size(att.file_size), row);
+        size->setStyleSheet("color:#7B8794; font-size:12px;");
+        top->addWidget(size, 0, Qt::AlignRight);
+
+        QLabel* state = new QLabel(QStringLiteral("已添加"), row);
+        state->setFixedWidth(46);
+        state->setStyleSheet("color:#16A34A; font-size:12px; font-weight:600;");
+        top->addWidget(state, 0, Qt::AlignRight);
+
+        QPushButton* remove = new QPushButton(QStringLiteral("移除"), row);
+        remove->setCursor(Qt::PointingHandCursor);
+        remove->setStyleSheet(
+            "QPushButton { background:#F3F6FA; color:#5F6F82; border:none; border-radius:5px; padding:5px 10px; font-size:12px; }"
+            "QPushButton:hover { background:#FFE8E8; color:#C24141; }");
+        connect(remove, &QPushButton::clicked, this, [this, i]() {
+            if (i < 0 || i >= static_cast<int>(attachments_.size())) return;
+            attachments_.erase(attachments_.begin() + i);
+            rebuild_attachment_panel();
+        });
+        top->addWidget(remove);
+        row_layout->addLayout(top);
+
+        attach_layout_->addWidget(row);
+
     }
 }

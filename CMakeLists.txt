@@ -10,12 +10,12 @@ set(CMAKE_AUTOUIC ON)
 option(MAILSYSTEM_DEPLOY "Copy runtime DLLs after building" ON)
 
 # --- Find Qt ---
-find_package(Qt6 COMPONENTS Widgets QUIET)
+find_package(Qt6 COMPONENTS Widgets Network QUIET)
 if(Qt6_FOUND)
-    set(QT_LIBS Qt6::Widgets)
+    set(QT_LIBS Qt6::Widgets Qt6::Network)
 else()
-    find_package(Qt5 REQUIRED COMPONENTS Widgets)
-    set(QT_LIBS Qt5::Widgets)
+    find_package(Qt5 REQUIRED COMPONENTS Widgets Network)
+    set(QT_LIBS Qt5::Widgets Qt5::Network)
 endif()
 
 # --- MySQL ---

@@ -1,13 +1,14 @@
 #include "app_style.h"
 
 #include <QPushButton>
+#include <QStyle>
 
 namespace UiStyle {
 
 QString globalStyle() {
     return QStringLiteral(R"(
         QMainWindow, QDialog {
-            background: #F5F7FA;
+            background: #F3F8FC;
         }
         QWidget {
             font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
@@ -42,8 +43,8 @@ QString globalStyle() {
         QToolBar {
             background: #FFFFFF;
             border: none;
-            border-bottom: 1px solid #E7EBF0;
-            padding: 8px 18px;
+            border-bottom: 1px solid #E3ECF4;
+            padding: 9px 18px;
             spacing: 10px;
             min-height: 56px;
         }
@@ -61,26 +62,26 @@ QString globalStyle() {
         }
         QPushButton#primaryBtn {
             color: #FFFFFF;
-            background: #1677FF;
-            border: 1px solid #1677FF;
+            background: #2F80ED;
+            border: 1px solid #2F80ED;
         }
         QPushButton#primaryBtn:hover {
-            background: #0F63D9;
-            border-color: #0F63D9;
+            background: #1F6ED4;
+            border-color: #1F6ED4;
         }
         QPushButton#primaryBtn:pressed {
-            background: #0B55BE;
-            border-color: #0B55BE;
+            background: #185DB6;
+            border-color: #185DB6;
         }
         QPushButton#secondaryBtn {
-            color: #2C3E50;
+            color: #304154;
             background: #FFFFFF;
-            border: 1px solid #DCE3EA;
+            border: 1px solid #D7E3EF;
         }
         QPushButton#secondaryBtn:hover {
-            color: #1677FF;
-            background: #F7FAFF;
-            border-color: #BBD7FF;
+            color: #2F80ED;
+            background: #F7FBFF;
+            border-color: #AFD1F1;
         }
         QPushButton#secondaryBtn:pressed {
             background: #EDF5FF;
@@ -92,8 +93,8 @@ QString globalStyle() {
             border: 1px solid transparent;
         }
         QPushButton#ghostBtn:hover {
-            color: #1677FF;
-            background: #EEF5FF;
+            color: #2F80ED;
+            background: #F0F7FF;
         }
         QPushButton#ghostBtn:pressed {
             background: #E2EEFF;
@@ -121,9 +122,9 @@ QString globalStyle() {
         }
         QPushButton#composeSidebarButton {
             color: #FFFFFF;
-            background: #1677FF;
-            border: 1px solid #1677FF;
-            border-radius: 12px;
+            background: #2F80ED;
+            border: 1px solid #2F80ED;
+            border-radius: 8px;
             padding: 10px 18px 10px 24px;
             min-height: 46px;
             font-size: 15px;
@@ -131,8 +132,8 @@ QString globalStyle() {
             text-align: left;
         }
         QPushButton#composeSidebarButton:hover {
-            background: #2B85FF;
-            border-color: #2B85FF;
+            background: #1F8FE5;
+            border-color: #1F8FE5;
         }
         QPushButton#composeSidebarButton:pressed {
             background: #0F63D9;
@@ -198,7 +199,7 @@ QString globalStyle() {
             border-color: #1677FF;
         }
         QTreeWidget {
-            background: #2C3E50;
+            background: #F6FAFE;
             border: none;
             outline: none;
             padding: 8px 0;
@@ -206,20 +207,21 @@ QString globalStyle() {
         QTreeWidget::item {
             min-height: 44px;
             padding: 0 18px 0 20px;
-            color: #DCE6F1;
-            border-left: 4px solid transparent;
+            color: #53657A;
+            border-left: 3px solid transparent;
         }
         QTreeWidget::item:hover:!selected {
-            background: rgba(255, 255, 255, 0.08);
+            background: #EDF6FF;
+            color: #2D5F92;
         }
         QTreeWidget::item:selected {
-            color: #FFFFFF;
-            background: rgba(22, 119, 255, 0.22);
-            border-left: 4px solid #1677FF;
+            color: #1D4E7E;
+            background: #E8F4FF;
+            border-left: 3px solid #2F80ED;
             font-weight: 600;
         }
         QListWidget, QListView {
-            background: #FFFFFF;
+            background: #FAFCFE;
             border: none;
             outline: none;
             padding: 6px 0;
@@ -260,7 +262,7 @@ QString globalStyle() {
         }
         QFrame#contentSurface {
             background: #FFFFFF;
-            border: 1px solid #E7EBF0;
+            border: 1px solid #E0EAF3;
             border-radius: 10px;
         }
         QWidget#mailListHeader {
@@ -328,6 +330,9 @@ static void applyButton(QPushButton* button, const char* object_name, int min_wi
     button->setObjectName(QString::fromLatin1(object_name));
     button->setMinimumWidth(min_width);
     button->setCursor(Qt::PointingHandCursor);
+    button->style()->unpolish(button);
+    button->style()->polish(button);
+    button->update();
 }
 
 void applyPrimaryButton(QPushButton* button, int min_width) {
